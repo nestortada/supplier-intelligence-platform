@@ -1,0 +1,39 @@
+# ── Environment & secrets ─────────────────────────────────────────────────
+.env
+*.env.local
+
+# ── Database ─────────────────────────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+
+# ── Runtime settings ──────────────────────────────────────────────────────
+app_runtime_settings.json
+
+# ── Python ────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# ── Node / Frontend ───────────────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+node_modules/
+dist/
+build/
+
+# ── Docker ────────────────────────────────────────────────────────────────
+# (docker-compose.yml and Dockerfiles ARE committed)
+
+# ── OS / Editor ───────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
