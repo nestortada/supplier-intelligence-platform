@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 import httpx
 import pytest
@@ -18,27 +19,35 @@ def test_build_apify_input_uses_identifier_priority() -> None:
     product = Product(product_name="Widget", upc="111", ean="222", gtin="333")
 
     assert build_apify_input(product) == {
-        "identifiers": ["111"],
-        "include_variants": False,
-        "stream_output": True,
+        "keywords": ["Widget"],
+        "maxResultsPerKeyword": 50,
+        "fullDetails": True,
+        "marketplace": "com",
+        "concurrency": 4,
+        "proxyConfiguration": {
+            "useApifyProxy": True,
+            "apifyProxyGroups": ["RESIDENTIAL"],
+        },
     }
 
+    product.product_name = None
     product.upc = None
-    assert build_apify_input(product)["identifiers"] == ["222"]
+    assert build_apify_input(product)["keywords"] == ["222"]
 
     product.ean = None
-    assert build_apify_input(product)["identifiers"] == ["333"]
+    assert build_apify_input(product)["keywords"] == ["333"]
 
 
 def test_build_apify_input_uses_amazon_sku_before_latest_asin() -> None:
     product = Product(product_name="Widget", sku="https://www.amazon.com/example/dp/B0ABC12345/")
     product.amazon_data = [AmazonProductData(asin="OLDASIN123", captured_at=datetime.utcnow())]
 
-    assert build_apify_input(product)["identifiers"] == ["https://www.amazon.com/example/dp/B0ABC12345/"]
+    assert build_apify_input(product)["keywords"] == ["Widget"]
 
+    product.product_name = None
     product.sku = "B0BN72FYFG"
 
-    assert build_apify_input(product)["identifiers"] == ["B0BN72FYFG"]
+    assert build_apify_input(product)["keywords"] == ["B0BN72FYFG"]
 
 
 def test_build_apify_input_uses_latest_asin_before_name() -> None:
@@ -48,7 +57,10 @@ def test_build_apify_input_uses_latest_asin_before_name() -> None:
         AmazonProductData(asin="NEW", captured_at=datetime.utcnow()),
     ]
 
-    assert build_apify_input(product)["identifiers"] == ["NEW"]
+    assert build_apify_input(product)["keywords"] == ["Widget"]
+
+    product.product_name = None
+    assert build_apify_input(product)["keywords"] == ["NEW"]
 
 
 def test_search_amazon_product_runs_actor_and_reads_dataset(monkeypatch) -> None:
@@ -85,7 +97,7 @@ def test_apify_service_retries_temporary_errors(monkeypatch) -> None:
     client = httpx.Client(transport=httpx.MockTransport(handler))
     service = ApifyService(client=client, max_retries=1)
 
-    result = service.run_actor({"identifiers": ["Widget"]})
+    result = service.run_actor({"keywords": ["Widget"]})
 
     assert result["defaultDatasetId"] == "dataset-1"
     assert attempts["count"] == 2
@@ -131,3 +143,32 @@ def test_map_apify_item_to_amazon_data_maps_flexible_fields() -> None:
     assert amazon_data.estimated_sales == 250
     assert amazon_data.price_history_json == "[10, 11, 12]"
     assert '"asin": "B001"' in amazon_data.raw_response_json
+
+
+def test_map_apify_item_to_amazon_data_maps_sales_actor_fields() -> None:
+    item = {
+        "asin": "B0BZYCJK89",
+        "url": "https://www.amazon.com/dp/B0BZYCJK89",
+        "title": "Owala FreeSip Insulated Stainless Steel Water Bottle",
+        "price": "$29.99",
+        "list_price": "$34.99",
+        "rating": 4.7,
+        "review_count": 118592,
+        "best_sellers_rank": [{"rank": 1, "category": "Kitchen & Dining"}],
+        "bought_in_past_month": "20K+",
+        "estimated_monthly_sales": 48953,
+        "images": ["https://m.media-amazon.com/images/I/example.jpg"],
+    }
+
+    amazon_data = map_apify_item_to_amazon_data(10, item)
+
+    assert amazon_data.asin == "B0BZYCJK89"
+    assert amazon_data.amazon_url == "https://www.amazon.com/dp/B0BZYCJK89"
+    assert amazon_data.amazon_title == "Owala FreeSip Insulated Stainless Steel Water Bottle"
+    assert amazon_data.image_url == "https://m.media-amazon.com/images/I/example.jpg"
+    assert amazon_data.current_price == Decimal("29.99")
+    assert amazon_data.list_price == Decimal("34.99")
+    assert amazon_data.rating == Decimal("4.7")
+    assert amazon_data.reviews_count == 118592
+    assert amazon_data.estimated_sales == 48953
+    assert '"Kitchen & Dining"' in (amazon_data.sellers_history_json or "")

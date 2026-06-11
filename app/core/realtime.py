@@ -5,7 +5,7 @@ from threading import RLock
 from typing import Any
 
 from fastapi import WebSocket
-from starlette.websockets import WebSocketState
+from starlette.websockets import WebSocketDisconnect, WebSocketState
 
 
 logger = logging.getLogger(__name__)
@@ -61,20 +61,22 @@ class RealtimeConnectionManager:
         }
 
         with self._lock:
-            targets = list(self._connections.get(profile_id, set()))
+            targets = [(websocket, profile_id) for websocket in self._connections.get(profile_id, set())]
             if profile_id is not None:
-                targets.extend(self._connections.get(None, set()))
+                targets.extend((websocket, None) for websocket in self._connections.get(None, set()))
 
         stale: list[tuple[WebSocket, int | None]] = []
-        for websocket in targets:
+        for websocket, target_profile_id in targets:
             try:
                 if websocket.client_state != WebSocketState.CONNECTED:
-                    stale.append((websocket, profile_id))
+                    stale.append((websocket, target_profile_id))
                     continue
                 await websocket.send_json(event)
+            except WebSocketDisconnect:
+                stale.append((websocket, target_profile_id))
             except Exception:
                 logger.exception("realtime_broadcast_failed", extra={"event_type": event_type, "profile_id": profile_id})
-                stale.append((websocket, profile_id))
+                stale.append((websocket, target_profile_id))
 
         for websocket, stale_profile_id in stale:
             await self.disconnect(websocket, stale_profile_id)

@@ -46,20 +46,35 @@ def _sku_search_identifier(product: Product) -> str | None:
     return None
 
 
+def _search_keyword(product: Product) -> str | None:
+    for value in (
+        product.product_name,
+        " ".join(part for part in (clean_text(product.brand), clean_text(product.category)) if part),
+        _sku_search_identifier(product),
+        _latest_asin(product),
+        product.upc,
+        product.ean,
+        product.gtin,
+    ):
+        keyword = clean_text(value)
+        if keyword:
+            return keyword
+    return None
+
+
 def build_apify_input(product: Product) -> dict[str, Any]:
-    identifier = (
-        product.upc
-        or product.ean
-        or product.gtin
-        or _sku_search_identifier(product)
-        or _latest_asin(product)
-        or product.product_name
-    )
+    keyword = _search_keyword(product)
 
     return {
-        "identifiers": [identifier] if identifier else [],
-        "include_variants": False,
-        "stream_output": True,
+        "keywords": [keyword] if keyword else [],
+        "maxResultsPerKeyword": 50,
+        "fullDetails": True,
+        "marketplace": "com",
+        "concurrency": 4,
+        "proxyConfiguration": {
+            "useApifyProxy": True,
+            "apifyProxyGroups": ["RESIDENTIAL"],
+        },
     }
 
 
@@ -77,12 +92,40 @@ def _int_value(value: Any) -> int | None:
     return int(cleaned)
 
 
+def _quantity_value(value: Any) -> int | None:
+    text = clean_text(value)
+    if text is None:
+        return None
+
+    multiplier = 1
+    normalized = text.upper()
+    if "K" in normalized:
+        multiplier = 1_000
+    elif "M" in normalized:
+        multiplier = 1_000_000
+
+    cleaned = clean_price(text)
+    if cleaned is None:
+        return None
+    return int(cleaned * multiplier)
+
+
 def _json_value(value: Any) -> str | None:
     if value is None:
         return None
     if isinstance(value, str):
         return value
     return json.dumps(value, ensure_ascii=True, default=str)
+
+
+def _first_text(value: Any) -> str | None:
+    if isinstance(value, list):
+        for item in value:
+            text = clean_text(item)
+            if text:
+                return text
+        return None
+    return clean_text(value)
 
 
 def map_apify_item_to_amazon_data(product_id: int, data: dict[str, Any]) -> AmazonProductData:
@@ -97,18 +140,24 @@ def map_apify_item_to_amazon_data(product_id: int, data: dict[str, Any]) -> Amaz
         asin=clean_text(data.get("asin")),
         amazon_title=clean_text(data.get("name") or data.get("title")),
         amazon_url=clean_text(data.get("product_url") or data.get("url")),
-        image_url=clean_text(data.get("image_url") or data.get("thumbnail_url")),
+        image_url=_first_text(data.get("image_url") or data.get("thumbnail_url") or data.get("images")),
         current_price=_decimal_value(data.get("price") or data.get("current_price")),
         buybox_price=_decimal_value(data.get("price_buybox")),
         amazon_price=_decimal_value(data.get("price_amazon")),
         list_price=_decimal_value(data.get("list_price")),
         currency=clean_text(data.get("currency")),
         rating=_decimal_value(data.get("rating")),
-        reviews_count=_int_value(data.get("n_reviews") or data.get("reviews_count")),
+        reviews_count=_int_value(data.get("n_reviews") or data.get("reviews_count") or data.get("review_count")),
         sellers_count=_int_value(data.get("n_offers_new") or data.get("sellers_count")),
-        estimated_sales=_int_value(data.get("estimated_sales") or data.get("monthly_sales") or data.get("sales")),
+        estimated_sales=_quantity_value(
+            data.get("estimated_monthly_sales")
+            or data.get("estimated_sales")
+            or data.get("monthly_sales")
+            or data.get("sales")
+            or data.get("bought_in_past_month")
+        ),
         price_history_json=_json_value(price_history),
-        sellers_history_json=_json_value(data.get("n_offers_new_history")),
+        sellers_history_json=_json_value(data.get("n_offers_new_history") or data.get("best_sellers_rank")),
         raw_response_json=json.dumps(data, ensure_ascii=True, default=str),
     )
 
@@ -153,7 +202,7 @@ class ApifyService:
 
     def search_amazon_product(self, product: Product) -> dict | None:
         input_data = build_apify_input(product)
-        if not input_data["identifiers"]:
+        if not input_data["keywords"]:
             return None
 
         actor_run = self.run_actor(input_data)

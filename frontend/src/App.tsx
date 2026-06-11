@@ -1,4 +1,4 @@
-import { Navigate, Route, BrowserRouter as Router, Routes } from 'react-router-dom'
+import { BrowserRouter, HashRouter, Navigate, Route, Routes } from 'react-router-dom'
 import AppShell from './components/AppShell'
 import ProfileProvider from './components/ProfileProvider'
 import ToastProvider from './components/ToastProvider'
@@ -10,6 +10,8 @@ import OpportunityRankingPage from './pages/OpportunityRankingPage'
 import ProfileSelectionPage from './pages/ProfileSelectionPage'
 import SelectedProductsPage from './pages/SelectedProductsPage'
 import SettingsPage from './pages/SettingsPage'
+
+const Router = import.meta.env.MODE === 'tauri' ? HashRouter : BrowserRouter
 
 function ProtectedShell() {
   const { activeProfile, loading } = useProfile()

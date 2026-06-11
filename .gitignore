@@ -1,6 +1,7 @@
 # ── Environment & secrets ─────────────────────────────────────────────────
 .env
 *.env.local
+*.env.enc
 api-8a32a-firebase-adminsdk-fbsvc-1faa9d7722.json
 *-firebase-adminsdk-*.json
 
@@ -22,6 +23,8 @@ __pycache__/
 .venv/
 venv/
 env/
+*.spec
+.desktop-test/
 
 # ── Node / Frontend ───────────────────────────────────────────────────────
 frontend/node_modules/

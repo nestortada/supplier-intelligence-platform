@@ -3,6 +3,8 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
+from app.core.desktop_paths import desktop_data_file, is_desktop_mode
+
 
 DEFAULT_SCORING_WEIGHTS = {
     "profitability": 0.30,
@@ -21,7 +23,7 @@ DEFAULT_FEES = {
     "default_other_costs": 0.50,
 }
 
-SETTINGS_FILE = Path("app_runtime_settings.json")
+SETTINGS_FILE = desktop_data_file("app_runtime_settings.json") if is_desktop_mode() else Path("app_runtime_settings.json")
 
 
 class RuntimeSettingsError(ValueError):

@@ -622,7 +622,7 @@ export default function OpportunityRankingPage() {
               type="button"
             >
               {cancelingWorkflow ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
-              Cancelar ejecuciÃ³n
+              Cancelar ejecución
             </button>
           ) : null}
           <button

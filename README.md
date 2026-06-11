@@ -1,212 +1,116 @@
-# Supplier Intelligence Platform Backend
+# SupplierIntel
 
-Backend MVP for finding wholesale suppliers, importing product catalogs, enriching products with Amazon data, scoring opportunities, and exporting results.
+SupplierIntel es una plataforma local-first para gestionar proveedores mayoristas, importar catalogos, enriquecer productos con datos de Amazon, calcular oportunidades de compra, enviar campanas de contacto por email y exportar resultados en Excel.
 
-## Technologies
+El proyecto incluye:
 
-- FastAPI
-- SQLAlchemy
-- SQLite
-- Pydantic
-- pandas and openpyxl
-- httpx
-- pytest
+- Backend FastAPI con SQLAlchemy y SQLite.
+- Frontend React, TypeScript, Vite y Tailwind.
+- App desktop Windows con Tauri y backend FastAPI como sidecar.
+- Sincronizacion opcional con Firebase/Firestore.
+- Integraciones con Apify para enriquecimiento de productos y EmailJS para campanas.
+- Pruebas automatizadas para APIs, servicios, scoring, sincronizacion y exportacion.
 
-## Installation
+## Inicio rapido
 
-```bash
+### Backend
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-```
-
-The app creates SQLite tables automatically on startup.
-
-## Environment Variables
-
-Create `.env` from `.env.example` and configure as needed:
-
-```env
-DATABASE_URL=sqlite:///./supplier_intelligence.db
-CORS_ORIGINS=["http://localhost:3000","http://localhost:5173"]
-
-EMAILJS_SERVICE_ID=
-EMAILJS_TEMPLATE_ID=
-EMAILJS_PUBLIC_KEY=
-EMAILJS_PRIVATE_KEY=
-EMAILJS_API_URL=https://api.emailjs.com/api/v1.0/email/send
-
-APIFY_TOKEN=
-APIFY_ACTOR_ID=
-APIFY_API_BASE_URL=https://api.apify.com/v2
-
-MY_NAME=
-MY_EMAIL=
-MY_PHONE=
-
-MAX_UPLOAD_SIZE_MB=10
-RATE_LIMIT_REQUESTS=60
-RATE_LIMIT_WINDOW_SECONDS=60
-```
-
-Runtime scoring and fee settings are stored locally in `app_runtime_settings.json`.
-
-## Run Server
-
-```bash
+Copy-Item .env.example .env
 uvicorn app.main:app --reload
 ```
 
-Open API docs:
+API local:
 
 ```text
+http://127.0.0.1:8000
 http://127.0.0.1:8000/docs
 ```
 
-## Health Check
+### Frontend
 
-```http
-GET /health
+```powershell
+cd frontend
+npm install
+npm run dev
 ```
 
-## Upload Suppliers
+Frontend local:
 
-```bash
-curl.exe -F "file=@proveedores_ejemplo.xlsx" http://127.0.0.1:8000/suppliers/upload
+```text
+http://127.0.0.1:5173
 ```
 
-Supported files: `.csv`, `.xls`, `.xlsx`.
+Si el backend no esta detras de `/api`, define `VITE_API_BASE_URL` antes de ejecutar Vite.
 
-## Send Email Campaign
+## Flujo principal
 
-Send one supplier:
+1. Crear o seleccionar un perfil.
+2. Subir proveedores desde Excel o CSV.
+3. Revisar proveedores elegibles y enviar campanas con EmailJS.
+4. Subir catalogos de productos por proveedor.
+5. Enriquecer productos pendientes con Apify.
+6. Ejecutar analisis de oportunidades.
+7. Revisar ranking, detalle financiero y productos seleccionados.
+8. Exportar reportes Excel.
+9. Sincronizar con Firebase si esta habilitado.
 
-```http
-POST /emails/send/{supplier_id}
-```
+## Documentacion
 
-Send all valid suppliers:
+- [Vision general](docs/01-overview.md)
+- [Instalacion y ejecucion](docs/02-instalacion.md)
+- [Configuracion y variables de entorno](docs/03-configuracion-env.md)
+- [Arquitectura](docs/04-arquitectura.md)
+- [API backend](docs/05-backend-api.md)
+- [Frontend](docs/06-frontend.md)
+- [Flujos principales](docs/07-flujos-principales.md)
+- [Sincronizacion Firebase](docs/08-sincronizacion-firebase.md)
+- [Apify y EmailJS](docs/09-apify-emailjs.md)
+- [Desktop Tauri](docs/10-desktop-tauri.md)
+- [Testing](docs/11-testing.md)
+- [Build, Docker y despliegue](docs/12-deploy-build.md)
+- [Troubleshooting](docs/13-troubleshooting.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
 
-```http
-POST /emails/campaigns/valid-suppliers
-```
+## Comandos utiles
 
-Check campaign:
-
-```http
-GET /emails/campaigns/{campaign_id}
-```
-
-## Upload Product Catalog
-
-```bash
-curl.exe -F "supplier_name=Acme Supply" -F "file=@catalogo_productos_ejemplo.xlsx" http://127.0.0.1:8000/catalogs/upload
-```
-
-## Enrich Products With Apify
-
-```http
-POST /products/enrich-apify
-```
-
-```json
-{
-  "all_pending": true
-}
-```
-
-## Analyze Products
-
-```http
-POST /products/analyze
-```
-
-Analyze all:
-
-```json
-{
-  "all": true
-}
-```
-
-Analyze selected products:
-
-```json
-{
-  "product_ids": [1, 2, 3]
-}
-```
-
-## Scoring And Fee Settings
-
-```http
-GET /settings/scoring
-PUT /settings/scoring
-GET /settings/fees
-PUT /settings/fees
-```
-
-Scoring weights must include all scoring keys and sum to `1.0`.
-
-## Ranking And Dashboard
-
-```http
-GET /products/ranking
-GET /products/{product_id}/analysis
-GET /dashboard/summary
-GET /dashboard/top-opportunities
-GET /dashboard/supplier-performance
-```
-
-## Export Results
-
-Download Excel files:
-
-```bash
-curl.exe -L -o products.xlsx http://127.0.0.1:8000/exports/products.xlsx
-curl.exe -L -o recommended-products.xlsx http://127.0.0.1:8000/exports/recommended-products.xlsx
-curl.exe -L -o suppliers.xlsx http://127.0.0.1:8000/exports/suppliers.xlsx
-curl.exe -L -o summary-report.xlsx http://127.0.0.1:8000/exports/summary-report.xlsx
-```
-
-## Complete Flow
-
-1. Upload suppliers with `/suppliers/upload`.
-2. Send supplier outreach with `/emails/campaigns/valid-suppliers`.
-3. Upload a supplier catalog with `/catalogs/upload`.
-4. Enrich pending products with `/products/enrich-apify`.
-5. Analyze products with `/products/analyze`.
-6. Review `/products/ranking` and dashboard endpoints.
-7. Export Excel reports from `/exports/*`.
-
-## Error Format
-
-Controlled errors use:
-
-```json
-{
-  "success": false,
-  "error": "Invalid file format",
-  "details": "Only Excel and CSV files are allowed"
-}
-```
-
-## Known Limitations
-
-- Runtime settings are local-file based, not multi-instance safe.
-- Rate limiting is in-memory and resets on process restart.
-- Apify field mapping is flexible but depends on actor output shape.
-- No user authentication or role-based authorization yet.
-
-## Next Improvements
-
-- Add user auth and API keys.
-- Move runtime settings to database.
-- Add migrations with Alembic.
-- Add frontend dashboard.
-- Add product matching review workflows.
-- Add cloud storage for imported and exported files.
-
-## Tests
-
-```bash
+```powershell
+# Backend
+uvicorn app.main:app --reload
 python -m pytest app/tests -q
+
+# Frontend
+cd frontend
+npm run dev
+npm run build
+npm run lint
+
+# Desktop Windows
+cd frontend
+npm run tauri:dev
+npm run tauri:build
+
+# Docker
+docker compose up --build
 ```
+
+## Datos de ejemplo
+
+El repo incluye archivos de prueba para validar los flujos:
+
+- `proveedores_ejemplo.xlsx`
+- `catalogo_productos_ejemplo.xlsx`
+- `catalogo_productos_amazon_ejemplo.xlsx`
+- `catalogo_productos_prueba_apify.xlsx`
+
+## Seguridad
+
+No subas secretos reales al repo. Configura claves en `.env` local o en el archivo cifrado de escritorio `.env.enc`. Para Firebase usa `FIREBASE_CREDENTIALS_PATH` apuntando al JSON local; no pegues el contenido del JSON dentro del codigo.
+
+## Estado tecnico
+
+SQLite es la fuente de datos local de la aplicacion. Firebase/Firestore funciona como espejo opcional para sincronizar perfiles y datos cuando esta habilitado. Los trabajos largos de Apify, analisis y campanas se ejecutan en backend y pueden consultarse o cancelarse desde los endpoints de jobs/campanas.

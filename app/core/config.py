@@ -1,10 +1,27 @@
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.desktop_paths import bundled_env_file, desktop_env_file, desktop_sqlite_url, is_desktop_mode
+from app.core.encrypted_env import load_encrypted_desktop_env
+
+
+load_encrypted_desktop_env()
+
+DEFAULT_DATABASE_URL = desktop_sqlite_url() if is_desktop_mode() else "sqlite:///./supplier_intelligence.db"
+DESKTOP_ENV_FILES = tuple(
+    str(path)
+    for path in (
+        bundled_env_file(),
+        desktop_env_file(),
+    )
+    if path is not None
+)
+ENV_FILES = DESKTOP_ENV_FILES if is_desktop_mode() else ".env"
+
 
 class Settings(BaseSettings):
     APP_NAME: str = "Supplier Intelligence Platform"
-    DATABASE_URL: str = "sqlite:///./supplier_intelligence.db"
+    DATABASE_URL: str = DEFAULT_DATABASE_URL
 
     EMAILJS_SERVICE_ID: str = ""
     EMAILJS_TEMPLATE_ID: str = ""
@@ -40,10 +57,14 @@ class Settings(BaseSettings):
             "http://localhost:5173",
             "http://127.0.0.1:3000",
             "http://127.0.0.1:5173",
+            "http://127.0.0.1:8765",
+            "http://127.0.0.1:18765",
+            "http://tauri.localhost",
+            "https://tauri.localhost",
         ]
     )
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=ENV_FILES, env_file_encoding="utf-8", extra="ignore")
 
 
 settings = Settings()
