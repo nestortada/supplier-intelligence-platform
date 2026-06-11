@@ -4,8 +4,8 @@ import type { RealtimeEvent } from '../types/realtime'
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/, '')
 
-function realtimeUrl(profileId: number): string {
-  const query = new URLSearchParams({ profile_id: String(profileId) }).toString()
+function realtimeUrl(profileId: number | null): string {
+  const query = profileId ? `?${new URLSearchParams({ profile_id: String(profileId) }).toString()}` : ''
 
   if (API_BASE_URL.startsWith('http')) {
     const url = new URL(API_BASE_URL)
@@ -16,12 +16,16 @@ function realtimeUrl(profileId: number): string {
   }
 
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${protocol}//${window.location.host}/ws/realtime?${query}`
+  return `${protocol}//${window.location.host}/ws/realtime${query}`
 }
 
-export function useRealtimeEvents(profileId: number | null | undefined, onEvent?: (event: RealtimeEvent) => void) {
+export function useRealtimeEvents(
+  profileId: number | null | undefined,
+  onEvent?: (event: RealtimeEvent) => void,
+  options: { connectWithoutProfile?: boolean } = {},
+) {
   useEffect(() => {
-    if (!profileId) {
+    if (!profileId && !options.connectWithoutProfile) {
       return undefined
     }
 
@@ -30,7 +34,7 @@ export function useRealtimeEvents(profileId: number | null | undefined, onEvent?
     let closedByEffect = false
 
     const connect = () => {
-      socket = new WebSocket(realtimeUrl(profileId))
+      socket = new WebSocket(realtimeUrl(profileId ?? null))
 
       socket.onmessage = (message) => {
         try {
@@ -59,5 +63,5 @@ export function useRealtimeEvents(profileId: number | null | undefined, onEvent?
       }
       socket?.close()
     }
-  }, [onEvent, profileId])
+  }, [onEvent, options.connectWithoutProfile, profileId])
 }

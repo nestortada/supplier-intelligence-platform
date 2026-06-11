@@ -1,8 +1,9 @@
 import { AlertCircle, BarChart3, ImagePlus, Loader2, Plus, UserPlus, X } from 'lucide-react'
-import { type ChangeEvent, type FormEvent, useMemo, useState } from 'react'
+import { type ChangeEvent, type FormEvent, useCallback, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import ProfileAvatar from '../components/ProfileAvatar'
 import { useProfile } from '../hooks/useProfile'
+import { useRealtimeEvents } from '../hooks/useRealtimeEvents'
 import { useToast } from '../hooks/useToast'
 import { cx } from '../utils/classNames'
 import type { UserProfile } from '../types/profile'
@@ -26,7 +27,7 @@ function fileToDataUrl(file: File): Promise<string> {
 export default function ProfileSelectionPage() {
   const navigate = useNavigate()
   const { addToast, notifications } = useToast()
-  const { activeProfile, createUserProfile, error, loading, profiles, selectProfile } = useProfile()
+  const { activeProfile, createUserProfile, error, loading, profiles, refreshProfiles, selectProfile } = useProfile()
   const [modalOpen, setModalOpen] = useState(false)
   const [name, setName] = useState('')
   const [avatarDataUrl, setAvatarDataUrl] = useState<string | null>(null)
@@ -34,6 +35,21 @@ export default function ProfileSelectionPage() {
   const [submitting, setSubmitting] = useState(false)
 
   const sortedProfiles = useMemo(() => profiles.slice().sort((a, b) => a.id - b.id), [profiles])
+
+  const handleRealtimeEvent = useCallback(
+    (event: { type: string }) => {
+      if (event.type === 'profile.presence') {
+        void refreshProfiles()
+      }
+    },
+    [refreshProfiles],
+  )
+
+  useRealtimeEvents(
+    null,
+    handleRealtimeEvent,
+    { connectWithoutProfile: true },
+  )
 
   function openDashboard(profile: UserProfile) {
     selectProfile(profile)
@@ -158,9 +174,10 @@ export default function ProfileSelectionPage() {
                     ) : null}
                     <span
                       className={cx(
-                        'absolute bottom-2 right-2 h-8 w-8 rounded-full border-4 border-black shadow-lg',
-                        index % 2 === 0 ? 'bg-success' : 'bg-zinc-700',
+                        'absolute bottom-2 right-2 h-8 w-8 rounded-full border-4 border-black shadow-lg transition-colors',
+                        profile.is_online ? 'bg-success shadow-successGlow' : 'bg-zinc-700',
                       )}
+                      title={profile.is_online ? 'Perfil en uso' : 'Perfil inactivo'}
                     />
                     {isActive ? (
                       <span className="absolute -right-3 -top-3 rounded-full bg-primary px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-[#23005c] shadow-xl">

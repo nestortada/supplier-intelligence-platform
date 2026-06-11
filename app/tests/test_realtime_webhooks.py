@@ -38,8 +38,8 @@ def client() -> Generator[TestClient, None, None]:
 
 def test_webhook_broadcasts_to_profile_socket(client: TestClient) -> None:
     with client.websocket_connect("/ws/realtime?profile_id=1") as websocket:
-        connected = websocket.receive_json()
-        assert connected["type"] == "realtime.connected"
+        messages = [websocket.receive_json(), websocket.receive_json()]
+        assert any(message["type"] == "realtime.connected" for message in messages)
 
         response = client.post(
             "/webhooks/events",
@@ -52,6 +52,25 @@ def test_webhook_broadcasts_to_profile_socket(client: TestClient) -> None:
         assert event["profile_id"] == 1
         assert event["payload"]["event_type"] == "external.product.changed"
         assert event["payload"]["payload"] == {"product_id": 10}
+
+
+def test_profile_presence_is_exposed_in_profiles_response(client: TestClient) -> None:
+    response = client.get("/profiles")
+    assert response.status_code == 200
+    profile = response.json()[0]
+    assert profile["is_online"] is False
+
+    with client.websocket_connect(f"/ws/realtime?profile_id={profile['id']}") as websocket:
+        messages = [websocket.receive_json(), websocket.receive_json()]
+        assert any(message["type"] == "profile.presence" and message["payload"]["is_online"] is True for message in messages)
+
+        online_response = client.get("/profiles")
+        assert online_response.status_code == 200
+        assert online_response.json()[0]["is_online"] is True
+
+    offline_response = client.get("/profiles")
+    assert offline_response.status_code == 200
+    assert offline_response.json()[0]["is_online"] is False
 
 
 def test_webhook_secret_is_enforced(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -2,6 +2,7 @@ export type UserProfile = {
   id: number
   name: string
   avatar_data_url: string | null
+  is_online: boolean
   created_at: string
   updated_at: string
 }

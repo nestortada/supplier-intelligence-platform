@@ -17,6 +17,7 @@ class UserProfileRead(BaseModel):
     id: int
     name: str
     avatar_data_url: str | None = None
+    is_online: bool = False
     created_at: datetime
     updated_at: datetime
 

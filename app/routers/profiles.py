@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.profiles import get_active_profile_id, get_or_create_default_profile, scoped_profile_filter
+from app.core.realtime import manager
 from app.models.amazon_data import AmazonProductData
 from app.models.analysis import ProductAnalysis
 from app.models.background_job import BackgroundJob
@@ -19,14 +20,26 @@ from app.services.sync_service import enqueue_delete_tombstones
 router = APIRouter(prefix="/profiles", tags=["profiles"])
 
 
+def profile_response(profile: UserProfile) -> dict:
+    return {
+        "id": profile.id,
+        "name": profile.name,
+        "avatar_data_url": profile.avatar_data_url,
+        "is_online": manager.is_profile_online(profile.id),
+        "created_at": profile.created_at,
+        "updated_at": profile.updated_at,
+    }
+
+
 @router.get("", response_model=list[UserProfileRead])
-def list_profiles(db: Session = Depends(get_db)) -> list[UserProfile]:
+def list_profiles(db: Session = Depends(get_db)) -> list[dict]:
     get_or_create_default_profile(db)
-    return db.query(UserProfile).order_by(UserProfile.created_at.asc(), UserProfile.id.asc()).all()
+    profiles = db.query(UserProfile).order_by(UserProfile.created_at.asc(), UserProfile.id.asc()).all()
+    return [profile_response(profile) for profile in profiles]
 
 
 @router.post("", response_model=UserProfileRead, status_code=status.HTTP_201_CREATED)
-def create_profile(payload: UserProfileCreate, db: Session = Depends(get_db)) -> UserProfile:
+def create_profile(payload: UserProfileCreate, db: Session = Depends(get_db)) -> dict:
     name = payload.name.strip()
     if not name:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Profile name is required.")
@@ -35,7 +48,7 @@ def create_profile(payload: UserProfileCreate, db: Session = Depends(get_db)) ->
     db.add(profile)
     db.commit()
     db.refresh(profile)
-    return profile
+    return profile_response(profile)
 
 
 @router.patch("/{profile_id}", response_model=UserProfileRead)
@@ -44,7 +57,7 @@ def update_profile(
     payload: UserProfileUpdate,
     db: Session = Depends(get_db),
     active_profile_id: int = Depends(get_active_profile_id),
-) -> UserProfile:
+) -> dict:
     if profile_id != active_profile_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot update another profile.")
 
@@ -61,7 +74,7 @@ def update_profile(
     profile.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(profile)
-    return profile
+    return profile_response(profile)
 
 
 @router.delete("/{profile_id}", response_model=UserProfileDeleteResponse)
@@ -108,4 +121,4 @@ def delete_profile(
     if next_profile is None:
         next_profile = get_or_create_default_profile(db)
 
-    return UserProfileDeleteResponse(success=True, active_profile=next_profile)
+    return UserProfileDeleteResponse(success=True, active_profile=profile_response(next_profile))

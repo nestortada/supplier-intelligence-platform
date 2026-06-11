@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { createProfile, deleteProfile, fetchProfiles, updateProfile } from '../api/profileApi'
 import { ProfileContext } from '../contexts/profileContext'
+import { useRealtimeEvents } from '../hooks/useRealtimeEvents'
 import type { UserProfile } from '../types/profile'
 
 export const ACTIVE_PROFILE_STORAGE_KEY = 'supplierintel.activeProfileId'
@@ -54,6 +55,8 @@ export default function ProfileProvider({ children }: ProfileProviderProps) {
 
     return () => window.clearTimeout(timeout)
   }, [refreshProfiles])
+
+  useRealtimeEvents(activeProfile?.id)
 
   const selectProfile = useCallback((profile: UserProfile) => {
     window.localStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, String(profile.id))
