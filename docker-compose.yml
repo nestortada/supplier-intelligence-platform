@@ -1,7 +1,4 @@
 services:
-  # ────────────────────────────────────────────────────────────────────────────
-  # Backend – FastAPI / Uvicorn
-  # ────────────────────────────────────────────────────────────────────────────
   backend:
     build:
       context: .
@@ -11,13 +8,15 @@ services:
     env_file:
       - .env
     environment:
-      # Override the DB path so it uses the mounted volume
       DATABASE_URL: sqlite:////app/data/supplier_intelligence.db
-      # Allow the frontend container's nginx origin
+      FIREBASE_CREDENTIALS_PATH: /run/secrets/firebase-adminsdk.json
       CORS_ORIGINS: '["http://localhost", "http://localhost:80", "http://frontend", "http://localhost:8000"]'
     volumes:
-      # Persist the SQLite database outside the container
       - db_data:/app/data
+      - type: bind
+        source: ${FIREBASE_CREDENTIALS_HOST_PATH:-./api-8a32a-firebase-adminsdk-fbsvc-1faa9d7722.json}
+        target: /run/secrets/firebase-adminsdk.json
+        read_only: true
     ports:
       - "8000:8000"
     healthcheck:
@@ -27,15 +26,11 @@ services:
       retries: 5
       start_period: 10s
 
-  # ────────────────────────────────────────────────────────────────────────────
-  # Frontend – React/Vite → built and served by Nginx
-  # ────────────────────────────────────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        # Point the Vite build to the backend
         VITE_API_BASE_URL: /api
     container_name: amazon_api_frontend
     restart: unless-stopped
@@ -45,9 +40,6 @@ services:
       backend:
         condition: service_healthy
 
-# ────────────────────────────────────────────────────────────────────────────
-# Named volumes
-# ────────────────────────────────────────────────────────────────────────────
 volumes:
   db_data:
     driver: local
