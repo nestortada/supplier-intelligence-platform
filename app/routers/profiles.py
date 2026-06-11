@@ -13,6 +13,7 @@ from app.models.product import Product
 from app.models.supplier import Supplier
 from app.models.user_profile import UserProfile
 from app.schemas.profile import UserProfileCreate, UserProfileDeleteResponse, UserProfileRead, UserProfileUpdate
+from app.services.sync_service import enqueue_delete_tombstones
 
 
 router = APIRouter(prefix="/profiles", tags=["profiles"])
@@ -82,8 +83,18 @@ def delete_profile(
     ]
 
     if product_ids:
+        analyses = db.query(ProductAnalysis).filter(ProductAnalysis.product_id.in_(product_ids)).all()
+        amazon_rows = db.query(AmazonProductData).filter(AmazonProductData.product_id.in_(product_ids)).all()
+        enqueue_delete_tombstones(db, [*analyses, *amazon_rows])
         db.query(ProductAnalysis).filter(ProductAnalysis.product_id.in_(product_ids)).delete(synchronize_session=False)
         db.query(AmazonProductData).filter(AmazonProductData.product_id.in_(product_ids)).delete(synchronize_session=False)
+
+    email_logs = db.query(EmailLog).filter(scoped_profile_filter(EmailLog, profile_id, db)).all()
+    email_campaigns = db.query(EmailCampaign).filter(scoped_profile_filter(EmailCampaign, profile_id, db)).all()
+    background_jobs = db.query(BackgroundJob).filter(scoped_profile_filter(BackgroundJob, profile_id, db)).all()
+    products = db.query(Product).filter(scoped_profile_filter(Product, profile_id, db)).all()
+    suppliers = db.query(Supplier).filter(scoped_profile_filter(Supplier, profile_id, db)).all()
+    enqueue_delete_tombstones(db, [*email_logs, *email_campaigns, *background_jobs, *products, *suppliers])
 
     db.query(EmailLog).filter(scoped_profile_filter(EmailLog, profile_id, db)).delete(synchronize_session=False)
     db.query(EmailCampaign).filter(scoped_profile_filter(EmailCampaign, profile_id, db)).delete(synchronize_session=False)

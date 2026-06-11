@@ -1,11 +1,13 @@
 import {
   AlertTriangle,
   BarChart3,
+  Check,
   CheckCircle2,
   Download,
   ExternalLink,
   FileSpreadsheet,
   Loader2,
+  Plus,
   RefreshCcw,
   Search,
   Trash2,
@@ -23,15 +25,29 @@ import {
   fetchJobs,
   fetchJobStatus,
   fetchOpportunityRanking,
+  updateProductSelection,
   uploadCatalogFile,
 } from '../api/opportunityApi'
+import ConfirmDialog from '../components/ConfirmDialog'
 import ProgressBar from '../components/ProgressBar'
+import { useProfile } from '../hooks/useProfile'
+import { useRealtimeRefresh } from '../hooks/useRealtimeRefresh'
 import { useToast } from '../hooks/useToast'
 import type { CatalogUploadResponse, JobStatus, RankingFilters, RankingItem } from '../types/opportunity'
 import { cx } from '../utils/classNames'
 import { formatDateTime, formatNumber, formatPercent } from '../utils/format'
 
 type WorkflowPhase = 'idle' | 'uploading' | 'apify' | 'analysis' | 'complete' | 'error' | 'canceled'
+type DeleteDialogState = { type: 'all' } | { type: 'product'; item: RankingItem } | null
+
+type ProductWorkflowSnapshot = {
+  phase: WorkflowPhase
+  uploadSummary: CatalogUploadResponse | null
+  apifyJob: JobStatus | null
+  analysisJob: JobStatus | null
+  workflowError: string | null
+  selectedFileName: string | null
+}
 
 const defaultFilters: RankingFilters = {
   minScore: 0,
@@ -45,6 +61,44 @@ const defaultFilters: RankingFilters = {
 
 const terminalStatuses = new Set(['completed', 'failed', 'error', 'canceled'])
 const activeStatuses = new Set(['pending', 'in_progress'])
+const rankingRealtimeEvents = [
+  'job.updated',
+  'products.updated',
+  'products.deleted',
+  'product.deleted',
+  'product.selection_updated',
+  'products.selection_cleared',
+  'webhook.received',
+]
+
+function readWorkflowSnapshot(key: string): ProductWorkflowSnapshot | null {
+  try {
+    const raw = window.localStorage.getItem(key)
+    if (!raw) {
+      return null
+    }
+
+    const parsed = JSON.parse(raw) as Partial<ProductWorkflowSnapshot>
+    if (!parsed.phase) {
+      return null
+    }
+
+    return {
+      phase: parsed.phase,
+      uploadSummary: parsed.uploadSummary ?? null,
+      apifyJob: parsed.apifyJob ?? null,
+      analysisJob: parsed.analysisJob ?? null,
+      workflowError: parsed.workflowError ?? null,
+      selectedFileName: parsed.selectedFileName ?? null,
+    }
+  } catch {
+    return null
+  }
+}
+
+function writeWorkflowSnapshot(key: string, snapshot: ProductWorkflowSnapshot) {
+  window.localStorage.setItem(key, JSON.stringify(snapshot))
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
@@ -110,19 +164,24 @@ function completedJob(job: JobStatus | null): boolean {
 }
 
 export default function OpportunityRankingPage() {
+  const { activeProfile } = useProfile()
+  const workflowStorageKey = `supplierintel.productWorkflow.${activeProfile?.id ?? 'default'}`
+  const storedWorkflow = readWorkflowSnapshot(workflowStorageKey)
   const [filters, setFilters] = useState<RankingFilters>(defaultFilters)
   const [ranking, setRanking] = useState<RankingItem[]>([])
   const [loadingRanking, setLoadingRanking] = useState(false)
   const [rankingError, setRankingError] = useState<string | null>(null)
-  const [phase, setPhase] = useState<WorkflowPhase>('idle')
-  const [uploadSummary, setUploadSummary] = useState<CatalogUploadResponse | null>(null)
-  const [apifyJob, setApifyJob] = useState<JobStatus | null>(null)
-  const [analysisJob, setAnalysisJob] = useState<JobStatus | null>(null)
-  const [workflowError, setWorkflowError] = useState<string | null>(null)
-  const [selectedFileName, setSelectedFileName] = useState<string | null>(null)
+  const [phase, setPhase] = useState<WorkflowPhase>(storedWorkflow?.phase ?? 'idle')
+  const [uploadSummary, setUploadSummary] = useState<CatalogUploadResponse | null>(storedWorkflow?.uploadSummary ?? null)
+  const [apifyJob, setApifyJob] = useState<JobStatus | null>(storedWorkflow?.apifyJob ?? null)
+  const [analysisJob, setAnalysisJob] = useState<JobStatus | null>(storedWorkflow?.analysisJob ?? null)
+  const [workflowError, setWorkflowError] = useState<string | null>(storedWorkflow?.workflowError ?? null)
+  const [selectedFileName, setSelectedFileName] = useState<string | null>(storedWorkflow?.selectedFileName ?? null)
   const [deletingProductId, setDeletingProductId] = useState<number | null>(null)
   const [deletingAllProducts, setDeletingAllProducts] = useState(false)
+  const [deleteDialog, setDeleteDialog] = useState<DeleteDialogState>(null)
   const [cancelingWorkflow, setCancelingWorkflow] = useState(false)
+  const [selectionUpdatingId, setSelectionUpdatingId] = useState<number | null>(null)
   const navigate = useNavigate()
   const { addToast } = useToast()
 
@@ -130,6 +189,17 @@ export default function OpportunityRankingPage() {
     phase === 'uploading' ||
     activeStatuses.has(apifyJob?.status ?? '') ||
     activeStatuses.has(analysisJob?.status ?? '')
+
+  useEffect(() => {
+    writeWorkflowSnapshot(workflowStorageKey, {
+      phase,
+      uploadSummary,
+      apifyJob,
+      analysisJob,
+      workflowError,
+      selectedFileName,
+    })
+  }, [analysisJob, apifyJob, phase, selectedFileName, uploadSummary, workflowError, workflowStorageKey])
 
   const kpis = useMemo(() => {
     const buy = ranking.filter((item) => item.recommendation.status === 'buy').length
@@ -163,6 +233,10 @@ export default function OpportunityRankingPage() {
     return () => window.clearTimeout(timeout)
   }, [loadRanking])
 
+  useRealtimeRefresh(rankingRealtimeEvents, () => {
+    void loadRanking()
+  })
+
   const waitForJob = useCallback(async (jobId: number, onUpdate: (job: JobStatus) => void) => {
     let current = await fetchJobStatus(jobId)
     onUpdate(current)
@@ -182,7 +256,7 @@ export default function OpportunityRankingPage() {
 
   const waitForActiveJobByType = useCallback(async (type: string) => {
     for (let attempt = 0; attempt < 20; attempt += 1) {
-      const activeJobs = await fetchJobs({ status: 'in_progress', type })
+      const activeJobs = (await fetchJobs({ type })).filter((job) => activeStatuses.has(job.status))
       if (activeJobs.length > 0) {
         return activeJobs[0]
       }
@@ -237,14 +311,44 @@ export default function OpportunityRankingPage() {
 
     const resumeActiveWorkflow = async () => {
       try {
-        const [activeAnalysisJobs, activeApifyJobs] = await Promise.all([
-          fetchJobs({ status: 'in_progress', type: 'product_analysis' }),
-          fetchJobs({ status: 'in_progress', type: 'apify_enrichment' }),
+        const [storedAnalysisJob, storedApifyJob] = await Promise.all([
+          analysisJob ? fetchJobStatus(analysisJob.job_id).catch(() => null) : Promise.resolve(null),
+          apifyJob ? fetchJobStatus(apifyJob.job_id).catch(() => null) : Promise.resolve(null),
         ])
 
         if (cancelled) {
           return
         }
+
+        if (storedAnalysisJob) {
+          setAnalysisJob(storedAnalysisJob)
+          if (activeStatuses.has(storedAnalysisJob.status)) {
+            setPhase('analysis')
+            void monitorBackendWorkflow()
+            return
+          }
+        }
+
+        if (storedApifyJob) {
+          setApifyJob(storedApifyJob)
+          if (activeStatuses.has(storedApifyJob.status)) {
+            setPhase('apify')
+            void monitorBackendWorkflow(storedApifyJob.job_id)
+            return
+          }
+        }
+
+        const [analysisJobs, apifyJobs] = await Promise.all([
+          fetchJobs({ type: 'product_analysis' }),
+          fetchJobs({ type: 'apify_enrichment' }),
+        ])
+
+        if (cancelled) {
+          return
+        }
+
+        const activeAnalysisJobs = analysisJobs.filter((job) => activeStatuses.has(job.status))
+        const activeApifyJobs = apifyJobs.filter((job) => activeStatuses.has(job.status))
 
         const activeAnalysisJob = activeAnalysisJobs[0]
         if (activeAnalysisJob) {
@@ -259,6 +363,15 @@ export default function OpportunityRankingPage() {
           setPhase('apify')
           setApifyJob(activeApifyJob)
           void monitorBackendWorkflow(activeApifyJob.job_id)
+          return
+        }
+
+        if (
+          storedAnalysisJob?.status === 'completed' ||
+          (storedApifyJob?.status === 'completed' && phase !== 'idle' && phase !== 'complete')
+        ) {
+          setPhase('complete')
+          await loadRanking()
         }
       } catch {
         // Ranking load will surface API issues; resume should stay non-blocking.
@@ -270,7 +383,7 @@ export default function OpportunityRankingPage() {
     return () => {
       cancelled = true
     }
-  }, [monitorBackendWorkflow])
+  }, [analysisJob?.job_id, apifyJob?.job_id, loadRanking, monitorBackendWorkflow, phase])
 
   const handleUploadAndAnalyze = useCallback(
     async (file: File) => {
@@ -368,18 +481,20 @@ export default function OpportunityRankingPage() {
   }, [addToast, analysisJob, apifyJob])
 
   const handleDeleteProduct = useCallback(
+    (item: RankingItem) => {
+      setDeleteDialog({ type: 'product', item })
+    },
+    [],
+  )
+
+  const confirmDeleteProduct = useCallback(
     async (item: RankingItem) => {
       const productName = item.amazon_data?.amazon_title || item.product.product_name || `Producto ${item.product.id}`
-      const confirmed = window.confirm(`Eliminar "${productName}" del ranking? Esta accion tambien elimina sus datos de Amazon y analisis.`)
-
-      if (!confirmed) {
-        return
-      }
-
       setDeletingProductId(item.product.id)
       try {
         await deleteProduct(item.product.id)
         setRanking((current) => current.filter((rankingItem) => rankingItem.product.id !== item.product.id))
+        setDeleteDialog(null)
         addToast({
           tone: 'success',
           title: 'Producto eliminado',
@@ -398,19 +513,16 @@ export default function OpportunityRankingPage() {
     [addToast],
   )
 
-  const handleDeleteAllProducts = useCallback(async () => {
-    const confirmed = window.confirm(
-      'Eliminar todos los productos creados? Esta accion tambien elimina sus datos de Amazon y analisis, pero conserva proveedores y campanas.',
-    )
+  const handleDeleteAllProducts = useCallback(() => {
+    setDeleteDialog({ type: 'all' })
+  }, [])
 
-    if (!confirmed) {
-      return
-    }
-
+  const confirmDeleteAllProducts = useCallback(async () => {
     setDeletingAllProducts(true)
     try {
       const response = await deleteAllProducts()
       setRanking([])
+      setDeleteDialog(null)
       addToast({
         tone: 'success',
         title: 'Productos eliminados',
@@ -432,6 +544,38 @@ export default function OpportunityRankingPage() {
       navigate(`/ranking/${item.product.id}`)
     },
     [navigate],
+  )
+
+  const handleToggleSelection = useCallback(
+    async (item: RankingItem) => {
+      const nextSelected = !item.product.selected_for_sale
+      setSelectionUpdatingId(item.product.id)
+      try {
+        const response = await updateProductSelection(item.product.id, {
+          selectedForSale: nextSelected,
+          salePerformance: nextSelected ? item.product.sale_performance : null,
+        })
+        setRanking((current) =>
+          current.map((rankingItem) =>
+            rankingItem.product.id === item.product.id ? { ...rankingItem, product: response.product } : rankingItem,
+          ),
+        )
+        addToast({
+          tone: nextSelected ? 'success' : 'info',
+          title: nextSelected ? 'Producto seleccionado' : 'Producto removido',
+          message: item.amazon_data?.amazon_title || item.product.product_name || `Producto ${item.product.id}`,
+        })
+      } catch (caught) {
+        addToast({
+          tone: 'error',
+          title: 'No se pudo actualizar la seleccion',
+          message: caught instanceof Error ? caught.message : 'Intenta de nuevo.',
+        })
+      } finally {
+        setSelectionUpdatingId(null)
+      }
+    },
+    [addToast],
   )
 
   return (
@@ -574,10 +718,39 @@ export default function OpportunityRankingPage() {
               key={item.product.id}
               onDelete={handleDeleteProduct}
               onOpen={handleOpenProduct}
+              onToggleSelection={handleToggleSelection}
+              selectionDisabled={workflowActive}
+              selectionUpdating={selectionUpdatingId === item.product.id}
             />
           ))}
         </div>
       ) : null}
+
+      <ConfirmDialog
+        confirmLabel={deleteDialog?.type === 'all' ? 'Eliminar todos' : 'Eliminar producto'}
+        loading={deleteDialog?.type === 'all' ? deletingAllProducts : deletingProductId !== null}
+        message={
+          deleteDialog?.type === 'all'
+            ? 'Esto eliminara todos los productos creados, sus datos de Amazon y sus analisis. Se conservan proveedores y campanas.'
+            : `Esto eliminara "${
+                deleteDialog?.type === 'product'
+                  ? deleteDialog.item.amazon_data?.amazon_title || deleteDialog.item.product.product_name || `Producto ${deleteDialog.item.product.id}`
+                  : 'este producto'
+              }" del ranking junto con sus datos de Amazon y analisis.`
+        }
+        onCancel={() => setDeleteDialog(null)}
+        onConfirm={() => {
+          if (deleteDialog?.type === 'all') {
+            void confirmDeleteAllProducts()
+            return
+          }
+          if (deleteDialog?.type === 'product') {
+            void confirmDeleteProduct(deleteDialog.item)
+          }
+        }}
+        open={deleteDialog !== null}
+        title={deleteDialog?.type === 'all' ? 'Eliminar base de productos' : 'Eliminar producto'}
+      />
     </div>
   )
 }
@@ -835,12 +1008,18 @@ function OpportunityCard({
   item,
   onDelete,
   onOpen,
+  onToggleSelection,
+  selectionDisabled,
+  selectionUpdating,
 }: {
   deleteDisabled: boolean
   deleting: boolean
   item: RankingItem
   onDelete: (item: RankingItem) => void
   onOpen: (item: RankingItem) => void
+  onToggleSelection: (item: RankingItem) => void
+  selectionDisabled: boolean
+  selectionUpdating: boolean
 }) {
   const amazonPrice =
     item.amazon_data?.current_price ??
@@ -893,6 +1072,30 @@ function OpportunityCard({
         <div className="relative p-5">
           <div className="absolute right-5 top-5 flex items-center gap-2">
             <button
+              aria-label={item.product.selected_for_sale ? 'Quitar de seleccionados' : 'Seleccionar producto'}
+              className={cx(
+                'inline-flex h-10 w-10 items-center justify-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-60',
+                item.product.selected_for_sale
+                  ? 'border-success/30 bg-success/10 text-success hover:bg-success/20'
+                  : 'border-primary/30 bg-primary/10 text-primary hover:bg-primary/20',
+              )}
+              disabled={selectionDisabled || selectionUpdating}
+              onClick={(event) => {
+                event.stopPropagation()
+                onToggleSelection(item)
+              }}
+              title={item.product.selected_for_sale ? 'Quitar de seleccionados' : 'Seleccionar producto'}
+              type="button"
+            >
+              {selectionUpdating ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : item.product.selected_for_sale ? (
+                <Check className="h-4 w-4" />
+              ) : (
+                <Plus className="h-4 w-4" />
+              )}
+            </button>
+            <button
               aria-label="Eliminar producto"
               className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-danger/30 bg-danger/10 text-danger transition hover:bg-danger/20 disabled:cursor-not-allowed disabled:opacity-60"
               disabled={deleteDisabled || deleting}
@@ -910,7 +1113,7 @@ function OpportunityCard({
             </div>
           </div>
 
-          <div className="pr-28">
+          <div className="pt-16 sm:pt-0 sm:pr-40">
             <p className="text-xs font-semibold uppercase text-primary">{item.product.brand || item.product.category || 'Amazon data'}</p>
             <h3 className="mt-1 line-clamp-2 font-display text-xl font-semibold leading-tight text-text">
               {item.amazon_data?.amazon_title || item.product.product_name || 'Producto sin nombre'}

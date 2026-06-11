@@ -25,6 +25,14 @@ class Settings(BaseSettings):
     RATE_LIMIT_REQUESTS: int = 60
     RATE_LIMIT_WINDOW_SECONDS: int = 60
 
+    FIREBASE_ENABLED: bool = False
+    FIREBASE_CREDENTIALS_PATH: str = ""
+    FIREBASE_PROJECT_ID: str = ""
+    FIREBASE_NAMESPACE: str = "default"
+    FIREBASE_SYNC_INTERVAL_SECONDS: int = 60
+
+    WEBHOOK_SECRET: str = ""
+
     CORS_ORIGINS: list[str] = Field(
         default_factory=lambda: [
             "http://localhost",

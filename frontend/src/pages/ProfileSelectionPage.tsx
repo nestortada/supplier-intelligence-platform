@@ -25,7 +25,7 @@ function fileToDataUrl(file: File): Promise<string> {
 
 export default function ProfileSelectionPage() {
   const navigate = useNavigate()
-  const { addToast } = useToast()
+  const { addToast, notifications } = useToast()
   const { activeProfile, createUserProfile, error, loading, profiles, selectProfile } = useProfile()
   const [modalOpen, setModalOpen] = useState(false)
   const [name, setName] = useState('')
@@ -101,7 +101,7 @@ export default function ProfileSelectionPage() {
       <section className="relative z-10 mx-auto flex w-full max-w-6xl flex-col items-center">
         <div className="mb-14 text-center">
           <div className="mb-6 flex items-center justify-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-primary/30 bg-primary/20">
+            <div className="relative flex h-12 w-12 items-center justify-center rounded-2xl border border-primary/30 bg-primary/20">
               <BarChart3 className="h-6 w-6 text-primary" />
             </div>
             <h2 className="font-display text-3xl font-bold tracking-normal text-primary md:text-4xl">Amazon Intelligence</h2>
@@ -128,6 +128,9 @@ export default function ProfileSelectionPage() {
           <div className="grid w-full max-w-5xl grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-4">
             {sortedProfiles.map((profile, index) => {
               const isActive = activeProfile?.id === profile.id
+              const hasUnreadNotifications = notifications.some(
+                (notification) => !notification.read && notification.profileId === profile.id,
+              )
               return (
                 <button
                   className="group flex min-w-0 flex-col items-center text-center transition-transform duration-200 hover:scale-[1.04] focus:outline-none"
@@ -150,6 +153,9 @@ export default function ProfileSelectionPage() {
                       )}
                       name={profile.name}
                     />
+                    {hasUnreadNotifications ? (
+                      <span className="absolute right-1 top-1 h-4 w-4 rounded-full bg-danger ring-4 ring-black" />
+                    ) : null}
                     <span
                       className={cx(
                         'absolute bottom-2 right-2 h-8 w-8 rounded-full border-4 border-black shadow-lg',

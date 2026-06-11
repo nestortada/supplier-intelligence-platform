@@ -8,6 +8,7 @@ from app.core.database import get_db
 from app.core.profiles import get_active_profile_id, scoped_profile_filter
 from app.models.background_job import BackgroundJob
 from app.schemas.analysis import JobStatusResponse
+from app.core.realtime import publish_realtime_event_sync
 
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -26,6 +27,20 @@ def job_status_response(job: BackgroundJob) -> JobStatusResponse:
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
+
+
+def job_event_payload(job: BackgroundJob) -> dict[str, object]:
+    return {
+        "job_id": job.id,
+        "type": job.type,
+        "status": job.status,
+        "progress": job.progress,
+        "total_items": job.total_items,
+        "processed_items": job.processed_items,
+        "failed_items": job.failed_items,
+        "error_message": job.error_message,
+        "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+    }
 
 
 @router.get("", response_model=list[JobStatusResponse])
@@ -73,4 +88,5 @@ def cancel_job(
     job.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(job)
+    publish_realtime_event_sync("job.updated", job_event_payload(job), profile_id)
     return job_status_response(job)

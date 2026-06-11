@@ -21,6 +21,18 @@ export type ProductDatabaseClearResponse = {
   analyses_deleted: number
 }
 
+export type SalePerformance = 'high' | 'medium' | 'low'
+
+export type ProductSelectionResponse = {
+  success: boolean
+  product: ProductPayload
+}
+
+export type ProductSelectionClearResponse = {
+  success: boolean
+  updated: number
+}
+
 export type JobStatus = {
   job_id: number
   type: string
@@ -49,6 +61,9 @@ export type ProductPayload = {
   case_quantity: number | null
   uom: string | null
   status: string
+  selected_for_sale: boolean
+  sale_performance: SalePerformance | null
+  selected_at: string | null
   created_at: string
   updated_at: string
 }
@@ -115,6 +130,16 @@ export type RankingItem = {
   analysis: ProductAnalysisPayload
   scores: RankingScores
   recommendation: RecommendationPayload
+}
+
+export type SelectedProductItem = {
+  product: ProductPayload
+  amazon_data: AmazonDataPayload | null
+  analysis: ProductAnalysisPayload | null
+  scores: RankingScores | null
+  recommendation: RecommendationPayload
+  sale_performance: SalePerformance | null
+  selected_at: string | null
 }
 
 export type FinancialAnalysisPayload = {

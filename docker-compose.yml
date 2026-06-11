@@ -36,7 +36,7 @@ services:
       dockerfile: Dockerfile
       args:
         # Point the Vite build to the backend
-        VITE_API_BASE_URL: http://localhost:8000
+        VITE_API_BASE_URL: /api
     container_name: amazon_api_frontend
     restart: unless-stopped
     ports:

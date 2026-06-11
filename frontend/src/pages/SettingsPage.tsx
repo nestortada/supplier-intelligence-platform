@@ -1,6 +1,7 @@
 import { AlertTriangle, Camera, Check, Loader2, RotateCcw, Save, Trash2, User, X } from 'lucide-react'
 import { type ChangeEvent, type FormEvent, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import ConfirmDialog from '../components/ConfirmDialog'
 import ProfileAvatar from '../components/ProfileAvatar'
 import { useProfile } from '../hooks/useProfile'
 import { useToast } from '../hooks/useToast'
@@ -26,6 +27,7 @@ export default function SettingsPage() {
   const [avatarError, setAvatarError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null)
 
   useEffect(() => {
@@ -104,15 +106,8 @@ export default function SettingsPage() {
     }
   }
 
-  async function handleDeleteAccount() {
+  async function confirmDeleteAccount() {
     if (!activeProfile) {
-      return
-    }
-
-    const confirmed = window.confirm(
-      `Eliminar la cuenta "${activeProfile.name}"? Se borraran sus proveedores, productos, analisis, campanas, logs y trabajos. Esta accion no se puede deshacer.`,
-    )
-    if (!confirmed) {
       return
     }
 
@@ -120,6 +115,7 @@ export default function SettingsPage() {
     try {
       await deleteActiveProfile()
       addToast({ title: 'Cuenta eliminada', message: activeProfile.name, tone: 'success' })
+      setDeleteDialogOpen(false)
       navigate('/profiles')
     } catch (caught) {
       addToast({
@@ -222,7 +218,7 @@ export default function SettingsPage() {
           <button
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#93000a] px-6 py-3 text-sm font-bold text-[#ffdad6] transition hover:bg-danger hover:text-[#690005] disabled:opacity-60 md:px-8"
             disabled={deleting}
-            onClick={() => void handleDeleteAccount()}
+            onClick={() => setDeleteDialogOpen(true)}
             type="button"
           >
             {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
@@ -258,6 +254,16 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
+
+      <ConfirmDialog
+        confirmLabel="Eliminar cuenta"
+        loading={deleting}
+        message={`Se borraran proveedores, productos, analisis, campanas, logs y trabajos de "${activeProfile.name}". Esta accion no se puede deshacer.`}
+        onCancel={() => setDeleteDialogOpen(false)}
+        onConfirm={() => void confirmDeleteAccount()}
+        open={deleteDialogOpen}
+        title="Eliminar cuenta"
+      />
     </form>
   )
 }

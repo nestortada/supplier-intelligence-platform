@@ -15,6 +15,8 @@ ProductStatus = Literal[
     "insufficient_data",
 ]
 
+SalePerformance = Literal["high", "medium", "low"]
+
 
 class ProductBase(BaseModel):
     supplier_id: int | None = None
@@ -31,6 +33,9 @@ class ProductBase(BaseModel):
     uom: str | None = None
     raw_row_json: str | None = None
     status: str = "pending_analysis"
+    selected_for_sale: bool = False
+    sale_performance: SalePerformance | None = None
+    selected_at: datetime | None = None
 
 
 class ProductCreate(ProductBase):
@@ -52,6 +57,9 @@ class ProductUpdate(BaseModel):
     uom: str | None = None
     raw_row_json: str | None = None
     status: str | None = None
+    selected_for_sale: bool | None = None
+    sale_performance: SalePerformance | None = None
+    selected_at: datetime | None = None
 
 
 class ProductRead(ProductBase):
@@ -84,6 +92,26 @@ class ProductDatabaseClearResponse(BaseModel):
     products_deleted: int
     amazon_data_deleted: int
     analyses_deleted: int
+
+
+class ProductSelectionUpdateRequest(BaseModel):
+    selected_for_sale: bool
+    sale_performance: SalePerformance | None = None
+
+
+class ProductPerformanceUpdateRequest(BaseModel):
+    product_id: int
+    sale_performance: SalePerformance | None = None
+
+
+class ProductSelectionResponse(BaseModel):
+    success: bool
+    product: ProductRead
+
+
+class ProductSelectionClearResponse(BaseModel):
+    success: bool
+    updated: int
 
 
 class EnrichApifyRequest(BaseModel):

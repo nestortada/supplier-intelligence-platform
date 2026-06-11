@@ -1,4 +1,4 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/, '')
 const ACTIVE_PROFILE_STORAGE_KEY = 'supplierintel.activeProfileId'
 
 export class ApiRequestError extends Error {
@@ -34,7 +34,8 @@ function resolveApiUrl(path: string): string {
     return path
   }
 
-  return `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+  return API_BASE_URL ? `${API_BASE_URL}${normalizedPath}` : normalizedPath
 }
 
 function errorMessageFromPayload(payload: unknown, fallback: string): string {

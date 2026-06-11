@@ -1,4 +1,5 @@
 from datetime import datetime
+from uuid import uuid4
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -19,6 +20,9 @@ class EmailCampaign(Base):
     failed_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    sync_id: Mapped[str | None] = mapped_column(String(64), default=lambda: uuid4().hex, unique=True, index=True)
+    sync_updated_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.utcnow)
+    sync_deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     profile = relationship("UserProfile", back_populates="email_campaigns")
     logs = relationship("EmailLog", back_populates="campaign", cascade="all, delete-orphan")
@@ -36,6 +40,9 @@ class EmailLog(Base):
     provider_response: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    sync_id: Mapped[str | None] = mapped_column(String(64), default=lambda: uuid4().hex, unique=True, index=True)
+    sync_updated_at: Mapped[datetime | None] = mapped_column(DateTime, default=datetime.utcnow)
+    sync_deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     profile = relationship("UserProfile", back_populates="email_logs")
     campaign = relationship("EmailCampaign", back_populates="logs")

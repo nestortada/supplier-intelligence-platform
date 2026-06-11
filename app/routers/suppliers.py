@@ -13,6 +13,7 @@ from app.models.product import Product
 from app.models.supplier import Supplier
 from app.schemas.supplier import SupplierDatabaseClearResponse, SupplierListResponse, SupplierRead, SupplierUploadResponse
 from app.services.excel_service import SupplierFileError, parse_suppliers_file
+from app.services.sync_service import enqueue_delete_tombstones
 
 router = APIRouter(prefix="/suppliers", tags=["suppliers"])
 
@@ -127,6 +128,14 @@ def clear_supplier_database(
 ) -> SupplierDatabaseClearResponse:
     products = db.query(Product).filter(scoped_profile_filter(Product, profile_id, db)).all()
     product_ids = [product.id for product in products]
+    email_logs = db.query(EmailLog).filter(scoped_profile_filter(EmailLog, profile_id, db)).all()
+    email_campaigns = db.query(EmailCampaign).filter(scoped_profile_filter(EmailCampaign, profile_id, db)).all()
+    analyses = db.query(ProductAnalysis).filter(ProductAnalysis.product_id.in_(product_ids)).all() if product_ids else []
+    amazon_rows = db.query(AmazonProductData).filter(AmazonProductData.product_id.in_(product_ids)).all() if product_ids else []
+    suppliers = db.query(Supplier).filter(scoped_profile_filter(Supplier, profile_id, db)).all()
+
+    enqueue_delete_tombstones(db, [*email_logs, *email_campaigns, *analyses, *amazon_rows, *products, *suppliers])
+
     email_logs_deleted = db.query(EmailLog).filter(scoped_profile_filter(EmailLog, profile_id, db)).delete(synchronize_session=False)
     email_campaigns_deleted = (
         db.query(EmailCampaign).filter(scoped_profile_filter(EmailCampaign, profile_id, db)).delete(synchronize_session=False)

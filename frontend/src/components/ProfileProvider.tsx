@@ -5,6 +5,7 @@ import { ProfileContext } from '../contexts/profileContext'
 import type { UserProfile } from '../types/profile'
 
 export const ACTIVE_PROFILE_STORAGE_KEY = 'supplierintel.activeProfileId'
+export const ACTIVE_PROFILE_NAME_STORAGE_KEY = 'supplierintel.activeProfileName'
 
 type ProfileProviderProps = {
   children: ReactNode
@@ -32,8 +33,12 @@ export default function ProfileProvider({ children }: ProfileProviderProps) {
       const activeId = storedProfileId()
       const restoredProfile = nextProfiles.find((profile) => profile.id === activeId) ?? null
       setActiveProfile(restoredProfile)
+      if (restoredProfile) {
+        window.localStorage.setItem(ACTIVE_PROFILE_NAME_STORAGE_KEY, restoredProfile.name)
+      }
       if (!restoredProfile) {
         window.localStorage.removeItem(ACTIVE_PROFILE_STORAGE_KEY)
+        window.localStorage.removeItem(ACTIVE_PROFILE_NAME_STORAGE_KEY)
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'No se pudieron cargar los perfiles.')
@@ -52,6 +57,7 @@ export default function ProfileProvider({ children }: ProfileProviderProps) {
 
   const selectProfile = useCallback((profile: UserProfile) => {
     window.localStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, String(profile.id))
+    window.localStorage.setItem(ACTIVE_PROFILE_NAME_STORAGE_KEY, profile.name)
     setActiveProfile(profile)
   }, [])
 
@@ -95,6 +101,7 @@ export default function ProfileProvider({ children }: ProfileProviderProps) {
 
     setActiveProfile(null)
     window.localStorage.removeItem(ACTIVE_PROFILE_STORAGE_KEY)
+    window.localStorage.removeItem(ACTIVE_PROFILE_NAME_STORAGE_KEY)
     return null
   }, [activeProfile, selectProfile])
 

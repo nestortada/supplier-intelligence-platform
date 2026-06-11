@@ -4,6 +4,7 @@ import type { ChangeEvent, FormEvent } from 'react'
 import { DEFAULT_EMAIL_SUBJECT } from '../constants/email'
 import type { LaunchCampaignInput, Supplier } from '../types/api'
 import { cx } from '../utils/classNames'
+import ConfirmDialog from './ConfirmDialog'
 import SupplierMultiSelect from './SupplierMultiSelect'
 
 type CampaignCreatorProps = {
@@ -38,6 +39,7 @@ export default function CampaignCreator({
   const [submitting, setSubmitting] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [clearing, setClearing] = useState(false)
+  const [clearDialogOpen, setClearDialogOpen] = useState(false)
 
   const disabled =
     submitting ||
@@ -81,19 +83,13 @@ export default function CampaignCreator({
     }
   }
 
-  const handleClearDatabase = async () => {
-    const confirmed = window.confirm(
-      'Esto borrará proveedores, productos, campañas y logs de email guardados. ¿Quieres continuar?',
-    )
-    if (!confirmed) {
-      return
-    }
-
+  const confirmClearDatabase = async () => {
     setClearing(true)
     try {
       await onClearDatabase()
       setSelectedSuppliers([])
       setTarget('eligible')
+      setClearDialogOpen(false)
     } finally {
       setClearing(false)
     }
@@ -106,7 +102,7 @@ export default function CampaignCreator({
           <Users className="h-5 w-5" />
         </div>
         <div>
-          <h2 className="font-display text-2xl font-semibold text-text">Nueva campaña</h2>
+          <h2 className="font-display text-2xl font-semibold text-text">Nueva campana</h2>
           <p className="text-sm text-muted">Carga proveedores, elige destinatarios y lanza el outreach.</p>
         </div>
       </div>
@@ -153,14 +149,14 @@ export default function CampaignCreator({
               <div>
                 <h3 className="text-sm font-semibold text-text">Limpiar base actual</h3>
                 <p className="mt-1 text-sm text-muted">
-                  Borra proveedores, productos, campañas y logs para cargar una base nueva desde cero.
+                  Borra proveedores, productos, campanas y logs para cargar una base nueva desde cero.
                 </p>
               </div>
             </div>
             <button
               className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-danger/30 bg-danger/10 px-4 py-2.5 text-sm font-semibold text-danger transition hover:bg-danger/15 disabled:cursor-not-allowed disabled:opacity-50"
               disabled={executionActive || clearing}
-              onClick={handleClearDatabase}
+              onClick={() => setClearDialogOpen(true)}
               type="button"
             >
               {clearing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
@@ -198,7 +194,7 @@ export default function CampaignCreator({
               onClick={() => setTarget('specific')}
               type="button"
             >
-              <span className="text-sm font-semibold text-text">Proveedores específicos</span>
+              <span className="text-sm font-semibold text-text">Proveedores especificos</span>
               <span className="mt-1 block text-sm text-muted">{selectedSuppliers.length} seleccionados</span>
             </button>
           </div>
@@ -219,8 +215,8 @@ export default function CampaignCreator({
         <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-muted">
             {target === 'eligible'
-              ? 'El backend excluye proveedores ya contactados y emails no válidos.'
-              : 'Solo se enviará a los proveedores seleccionados.'}
+              ? 'El backend excluye proveedores ya contactados y emails no validos.'
+              : 'Solo se enviara a los proveedores seleccionados.'}
           </p>
           <button
             className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-[#24005f] shadow-glow transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
@@ -228,10 +224,22 @@ export default function CampaignCreator({
             type="submit"
           >
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
-            Lanzar campaña
+            Lanzar campana
           </button>
         </div>
       </form>
+
+      <ConfirmDialog
+        confirmLabel="Eliminar base"
+        loading={clearing}
+        message="Esto borrara proveedores, productos, campanas, logs de email y datos relacionados del perfil activo. Esta accion no se puede deshacer."
+        onCancel={() => setClearDialogOpen(false)}
+        onConfirm={() => void confirmClearDatabase()}
+        open={clearDialogOpen}
+        title="Eliminar base de datos"
+      >
+        Usa esta accion solo si quieres empezar con una base nueva desde cero.
+      </ConfirmDialog>
     </section>
   )
 }

@@ -10,6 +10,7 @@ import { useCampaignPolling } from '../hooks/useCampaignPolling'
 import { useEligibleSuppliers } from '../hooks/useEligibleSuppliers'
 import { useEmailCampaigns } from '../hooks/useEmailCampaigns'
 import { useEmailLogs } from '../hooks/useEmailLogs'
+import { useRealtimeRefresh } from '../hooks/useRealtimeRefresh'
 import { useSuppliers } from '../hooks/useSuppliers'
 import { useToast } from '../hooks/useToast'
 import type { EmailLog, EmailLogFilters, LaunchCampaignInput } from '../types/api'
@@ -19,6 +20,8 @@ const defaultLogFilters: EmailLogFilters = {
   lookupType: 'none',
   lookupValue: '',
 }
+
+const emailRealtimeEvents = ['email_campaign.created', 'email_campaign.updated', 'email.sent', 'webhook.received']
 
 export default function EmailCampaignsPage() {
   const [supplierSearch, setSupplierSearch] = useState('')
@@ -49,6 +52,8 @@ export default function EmailCampaignsPage() {
     void campaigns.refresh()
     void eligibleSuppliers.refresh()
   }, [allLogs, campaigns, eligibleSuppliers, filteredLogs])
+
+  useRealtimeRefresh(emailRealtimeEvents, refreshEmailData)
 
   const handleLaunch = useCallback(
     async (input: LaunchCampaignInput) => {

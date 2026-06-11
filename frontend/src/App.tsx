@@ -8,6 +8,7 @@ import EmailCampaignsPage from './pages/EmailCampaignsPage'
 import ProductAnalysisDetailPage from './pages/ProductAnalysisDetailPage'
 import OpportunityRankingPage from './pages/OpportunityRankingPage'
 import ProfileSelectionPage from './pages/ProfileSelectionPage'
+import SelectedProductsPage from './pages/SelectedProductsPage'
 import SettingsPage from './pages/SettingsPage'
 
 function ProtectedShell() {
@@ -33,6 +34,7 @@ function ProtectedShell() {
         <Route element={<EmailCampaignsPage />} path="/emails" />
         <Route element={<OpportunityRankingPage />} path="/ranking" />
         <Route element={<ProductAnalysisDetailPage />} path="/ranking/:productId" />
+        <Route element={<SelectedProductsPage />} path="/seleccionados" />
         <Route element={<SettingsPage />} path="/settings" />
         <Route element={<Navigate replace to="/emails" />} path="*" />
       </Routes>

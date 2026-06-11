@@ -20,6 +20,7 @@ SENSITIVE_ROUTES = (
     ("POST", "/emails/campaigns"),
     ("POST", "/products/enrich-apify"),
     ("POST", "/products/analyze"),
+    ("POST", "/webhooks/events"),
     ("PUT", "/settings/scoring"),
     ("PUT", "/settings/fees"),
     ("GET", "/exports/"),

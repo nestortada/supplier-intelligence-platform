@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import SessionLocal, get_db
 from app.core.profiles import get_active_profile_id, scoped_profile_filter
+from app.core.realtime import publish_realtime_event_sync
 from app.models.email_campaign import EmailCampaign, EmailLog
 from app.models.supplier import Supplier
 from app.schemas.email import (
@@ -151,6 +152,17 @@ def send_supplier_email(
     supplier.updated_at = now
     db.commit()
     db.refresh(log)
+    publish_realtime_event_sync(
+        "email.sent",
+        {
+            "log_id": log.id,
+            "campaign_id": campaign_id,
+            "supplier_id": supplier.id,
+            "status": log.status,
+            "to_email": log.to_email,
+        },
+        log.profile_id,
+    )
 
     return log
 
@@ -192,6 +204,7 @@ def run_campaign(campaign_id: int, supplier_ids: list[int], subject: str, templa
 
             campaign.updated_at = datetime.utcnow()
             db.commit()
+            publish_realtime_event_sync("email_campaign.updated", campaign_event_payload(campaign), profile_id)
 
             if index < len(supplier_ids) - 1:
                 time.sleep(1)
@@ -209,6 +222,7 @@ def run_campaign(campaign_id: int, supplier_ids: list[int], subject: str, templa
 
         campaign.updated_at = datetime.utcnow()
         db.commit()
+        publish_realtime_event_sync("email_campaign.updated", campaign_event_payload(campaign), profile_id)
     except Exception:
         logger.exception("email_campaign_unexpected_error", extra={"campaign_id": campaign_id})
         campaign = db.query(EmailCampaign).filter(scoped_profile_filter(EmailCampaign, profile_id, db), EmailCampaign.id == campaign_id).first()
@@ -216,6 +230,7 @@ def run_campaign(campaign_id: int, supplier_ids: list[int], subject: str, templa
             campaign.status = "error"
             campaign.updated_at = datetime.utcnow()
             db.commit()
+            publish_realtime_event_sync("email_campaign.updated", campaign_event_payload(campaign), profile_id)
     finally:
         db.close()
 
@@ -240,6 +255,7 @@ def create_campaign(
     db.add(campaign)
     db.commit()
     db.refresh(campaign)
+    publish_realtime_event_sync("email_campaign.created", campaign_event_payload(campaign), profile_id)
 
     return campaign, [supplier.id for supplier in deduped_suppliers]
 
@@ -263,6 +279,19 @@ def campaign_summary_response(campaign: EmailCampaign) -> CampaignSummary:
         created_at=campaign.created_at,
         updated_at=campaign.updated_at,
     )
+
+
+def campaign_event_payload(campaign: EmailCampaign) -> dict[str, object]:
+    return {
+        "campaign_id": campaign.id,
+        "status": campaign.status,
+        "total": campaign.total_recipients,
+        "sent": campaign.sent_count,
+        "failed": campaign.failed_count,
+        "pending": max(campaign.total_recipients - campaign.sent_count - campaign.failed_count, 0),
+        "subject": campaign.subject,
+        "updated_at": campaign.updated_at.isoformat() if campaign.updated_at else None,
+    }
 
 
 def email_log_response(log: EmailLog) -> EmailLogRead:
@@ -390,6 +419,7 @@ def cancel_campaign(
     campaign.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(campaign)
+    publish_realtime_event_sync("email_campaign.updated", campaign_event_payload(campaign), profile_id)
     return campaign_status_response(campaign)
 
 

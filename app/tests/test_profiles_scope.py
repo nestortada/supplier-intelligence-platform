@@ -129,6 +129,23 @@ def test_dashboard_email_and_product_data_are_scoped_by_profile() -> None:
         assert [item["product"]["product_name"] for item in default_ranking] == ["Default Widget"]
         assert [item["product"]["product_name"] for item in second_ranking] == ["Second Widget"]
 
+        select_default = client.patch(
+            f"/products/{default_product_id}/selection",
+            json={"selected_for_sale": True, "sale_performance": "high"},
+            headers=default_headers,
+        )
+        assert select_default.status_code == 200
+        assert client.patch(
+            f"/products/{default_product_id}/selection",
+            json={"selected_for_sale": True},
+            headers=second_headers,
+        ).status_code == 404
+
+        default_selected = client.get("/products/selected", headers=default_headers).json()
+        second_selected = client.get("/products/selected", headers=second_headers).json()
+        assert [item["product"]["product_name"] for item in default_selected] == ["Default Widget"]
+        assert second_selected == []
+
         assert client.get(f"/products/{second_product_id}/analysis", headers=default_headers).status_code == 404
         assert client.get(f"/products/{default_product_id}/analysis", headers=second_headers).status_code == 404
 

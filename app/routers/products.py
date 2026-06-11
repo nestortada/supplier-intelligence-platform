@@ -24,10 +24,16 @@ from app.schemas.product import (
     EnrichApifyResponse,
     ProductDatabaseClearResponse,
     ProductListResponse,
+    ProductPerformanceUpdateRequest,
     ProductRead,
+    ProductSelectionClearResponse,
+    ProductSelectionResponse,
+    ProductSelectionUpdateRequest,
 )
 from app.services.apify_service import ApifyService, map_apify_item_to_amazon_data
 from app.services.product_scoring_engine import ProductScoringEngine
+from app.services.sync_service import enqueue_delete_tombstones
+from app.core.realtime import publish_realtime_event_sync
 
 
 logger = logging.getLogger(__name__)
@@ -85,6 +91,21 @@ def _update_job_progress(db: Session, job: BackgroundJob) -> None:
     job.progress = int((job.processed_items / job.total_items) * 100) if job.total_items else 100
     job.updated_at = datetime.utcnow()
     db.commit()
+    publish_realtime_event_sync("job.updated", _job_event_payload(job), job.profile_id)
+
+
+def _job_event_payload(job: BackgroundJob) -> dict[str, Any]:
+    return {
+        "job_id": job.id,
+        "type": job.type,
+        "status": job.status,
+        "progress": job.progress,
+        "total_items": job.total_items,
+        "processed_items": job.processed_items,
+        "failed_items": job.failed_items,
+        "error_message": job.error_message,
+        "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+    }
 
 
 def _decimal_field(value: Any) -> Decimal | None:
@@ -129,6 +150,9 @@ def _product_payload(product: Product) -> dict[str, Any]:
         "case_quantity": product.case_quantity,
         "uom": product.uom,
         "status": product.status,
+        "selected_for_sale": product.selected_for_sale,
+        "sale_performance": product.sale_performance,
+        "selected_at": product.selected_at,
         "created_at": product.created_at,
         "updated_at": product.updated_at,
     }
@@ -187,6 +211,24 @@ def _analysis_payload(analysis: ProductAnalysis) -> dict[str, Any]:
     }
 
 
+def _selected_product_payload(db: Session, product: Product) -> dict[str, Any]:
+    analysis = _latest_product_analysis(db, product.id)
+    amazon_data = _latest_amazon_data(db, product.id)
+    return {
+        "product": _product_payload(product),
+        "amazon_data": _amazon_data_payload(amazon_data),
+        "analysis": _analysis_payload(analysis) if analysis else None,
+        "scores": _scores_payload(analysis) if analysis else None,
+        "recommendation": {
+            "status": analysis.recommendation_status if analysis else product.status,
+            "reason": analysis.recommendation_reason if analysis else None,
+            "risks": _json_list(analysis.risks_json) if analysis else [],
+        },
+        "sale_performance": product.sale_performance,
+        "selected_at": product.selected_at,
+    }
+
+
 def _analysis_from_result(product_id: int, result: dict[str, Any]) -> ProductAnalysis:
     return ProductAnalysis(
         product_id=product_id,
@@ -227,6 +269,7 @@ def run_apify_enrichment(
         job.total_items = len(product_ids)
         job.progress = 0 if product_ids else 100
         db.commit()
+        publish_realtime_event_sync("job.updated", _job_event_payload(job), profile_id)
 
         for product_id in product_ids:
             db.expire_all()
@@ -279,6 +322,8 @@ def run_apify_enrichment(
         job.progress = 100
         job.updated_at = datetime.utcnow()
         db.commit()
+        publish_realtime_event_sync("job.updated", _job_event_payload(job), profile_id)
+        publish_realtime_event_sync("products.updated", {"reason": "apify_enrichment_finished", "job_id": job.id}, profile_id)
 
         if job.status == "completed" and run_analysis_after:
             analysis_products = db.query(Product).filter(scoped_profile_filter(Product, profile_id, db)).order_by(Product.id.asc()).all()
@@ -294,6 +339,7 @@ def run_apify_enrichment(
             db.add(analysis_job)
             db.commit()
             db.refresh(analysis_job)
+            publish_realtime_event_sync("job.created", _job_event_payload(analysis_job), profile_id)
             if analysis_products:
                 run_product_analysis(analysis_job.id, [product.id for product in analysis_products], profile_id)
     except Exception as exc:
@@ -304,6 +350,7 @@ def run_apify_enrichment(
             job.error_message = str(exc)
             job.updated_at = datetime.utcnow()
             db.commit()
+            publish_realtime_event_sync("job.updated", _job_event_payload(job), profile_id)
     finally:
         db.close()
 
@@ -322,6 +369,7 @@ def run_product_analysis(job_id: int, product_ids: list[int], profile_id: int) -
         job.total_items = len(product_ids)
         job.progress = 0 if product_ids else 100
         db.commit()
+        publish_realtime_event_sync("job.updated", _job_event_payload(job), profile_id)
 
         for product_id in product_ids:
             db.expire_all()
@@ -366,6 +414,8 @@ def run_product_analysis(job_id: int, product_ids: list[int], profile_id: int) -
         job.progress = 100
         job.updated_at = datetime.utcnow()
         db.commit()
+        publish_realtime_event_sync("job.updated", _job_event_payload(job), profile_id)
+        publish_realtime_event_sync("products.updated", {"reason": "product_analysis_finished", "job_id": job.id}, profile_id)
     except Exception as exc:
         logger.exception("product_analysis_job_failed", extra={"job_id": job_id})
         job = db.query(BackgroundJob).filter(scoped_profile_filter(BackgroundJob, profile_id, db), BackgroundJob.id == job_id).first()
@@ -374,6 +424,7 @@ def run_product_analysis(job_id: int, product_ids: list[int], profile_id: int) -
             job.error_message = str(exc)
             job.updated_at = datetime.utcnow()
             db.commit()
+            publish_realtime_event_sync("job.updated", _job_event_payload(job), profile_id)
     finally:
         db.close()
 
@@ -417,6 +468,7 @@ def analyze_products(
     db.add(job)
     db.commit()
     db.refresh(job)
+    publish_realtime_event_sync("job.created", _job_event_payload(job), profile_id)
 
     if products:
         background_tasks.add_task(run_product_analysis, job.id, [product.id for product in products], profile_id)
@@ -555,6 +607,109 @@ def list_products(
     return ProductListResponse(items=items, total=total, page=page, page_size=page_size)
 
 
+@router.get("/selected")
+def list_selected_products(
+    db: Session = Depends(get_db),
+    profile_id: int = Depends(get_active_profile_id),
+) -> list[dict[str, Any]]:
+    products = (
+        db.query(Product)
+        .filter(scoped_profile_filter(Product, profile_id, db), Product.selected_for_sale.is_(True))
+        .order_by(Product.selected_at.desc(), Product.updated_at.desc(), Product.id.desc())
+        .all()
+    )
+    return [_selected_product_payload(db, product) for product in products]
+
+
+@router.patch("/selected/performance", response_model=ProductSelectionResponse)
+def update_selected_product_performance(
+    request: ProductPerformanceUpdateRequest,
+    db: Session = Depends(get_db),
+    profile_id: int = Depends(get_active_profile_id),
+) -> ProductSelectionResponse:
+    product = db.query(Product).filter(scoped_profile_filter(Product, profile_id, db), Product.id == request.product_id).first()
+    if product is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found.")
+    if not product.selected_for_sale:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Product is not selected.")
+
+    product.sale_performance = request.sale_performance
+    product.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(product)
+    publish_realtime_event_sync(
+        "product.selection_updated",
+        {
+            "product_id": product.id,
+            "selected_for_sale": product.selected_for_sale,
+            "sale_performance": product.sale_performance,
+            "selected_at": product.selected_at.isoformat() if product.selected_at else None,
+        },
+        profile_id,
+    )
+    return ProductSelectionResponse(success=True, product=product)
+
+
+@router.delete("/selected", response_model=ProductSelectionClearResponse)
+def clear_selected_products(
+    db: Session = Depends(get_db),
+    profile_id: int = Depends(get_active_profile_id),
+) -> ProductSelectionClearResponse:
+    products = (
+        db.query(Product)
+        .filter(scoped_profile_filter(Product, profile_id, db), Product.selected_for_sale.is_(True))
+        .all()
+    )
+    now = datetime.utcnow()
+    for product in products:
+        product.selected_for_sale = False
+        product.sale_performance = None
+        product.selected_at = None
+        product.updated_at = now
+
+    db.commit()
+    publish_realtime_event_sync("products.selection_cleared", {"updated": len(products)}, profile_id)
+    return ProductSelectionClearResponse(success=True, updated=len(products))
+
+
+@router.patch("/{product_id}/selection", response_model=ProductSelectionResponse)
+def update_product_selection(
+    product_id: int,
+    request: ProductSelectionUpdateRequest,
+    db: Session = Depends(get_db),
+    profile_id: int = Depends(get_active_profile_id),
+) -> ProductSelectionResponse:
+    product = db.query(Product).filter(scoped_profile_filter(Product, profile_id, db), Product.id == product_id).first()
+    if product is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found.")
+
+    now = datetime.utcnow()
+    if request.selected_for_sale:
+        if not product.selected_for_sale:
+            product.selected_at = now
+        product.selected_for_sale = True
+        product.sale_performance = request.sale_performance
+    else:
+        product.selected_for_sale = False
+        product.sale_performance = None
+        product.selected_at = None
+
+    product.updated_at = now
+    db.commit()
+    db.refresh(product)
+    publish_realtime_event_sync(
+        "product.selection_updated",
+        {
+            "product_id": product.id,
+            "selected_for_sale": product.selected_for_sale,
+            "sale_performance": product.sale_performance,
+            "selected_at": product.selected_at.isoformat() if product.selected_at else None,
+        },
+        profile_id,
+    )
+    return ProductSelectionResponse(success=True, product=product)
+
+
 @router.post("/bulk-update-status", response_model=BulkUpdateStatusResponse)
 def bulk_update_status(
     request: BulkUpdateStatusRequest,
@@ -569,6 +724,7 @@ def bulk_update_status(
         product.status = request.status
 
     db.commit()
+    publish_realtime_event_sync("products.updated", {"reason": "bulk_status", "updated": len(products), "status": request.status}, profile_id)
     return BulkUpdateStatusResponse(success=True, updated=len(products))
 
 
@@ -617,6 +773,7 @@ def enrich_products_with_apify(
     db.add(job)
     db.commit()
     db.refresh(job)
+    publish_realtime_event_sync("job.created", _job_event_payload(job), profile_id)
 
     if products:
         background_tasks.add_task(
@@ -695,17 +852,30 @@ def clear_product_database(
     db: Session = Depends(get_db),
     profile_id: int = Depends(get_active_profile_id),
 ) -> ProductDatabaseClearResponse:
+    products = db.query(Product).filter(scoped_profile_filter(Product, profile_id, db)).all()
     product_ids = [
-        product_id
-        for (product_id,) in db.query(Product.id).filter(scoped_profile_filter(Product, profile_id, db)).all()
+        product.id
+        for product in products
     ]
     analyses_deleted = 0
     amazon_data_deleted = 0
     if product_ids:
+        analyses = db.query(ProductAnalysis).filter(ProductAnalysis.product_id.in_(product_ids)).all()
+        amazon_rows = db.query(AmazonProductData).filter(AmazonProductData.product_id.in_(product_ids)).all()
+        enqueue_delete_tombstones(db, [*analyses, *amazon_rows, *products])
         analyses_deleted = db.query(ProductAnalysis).filter(ProductAnalysis.product_id.in_(product_ids)).delete(synchronize_session=False)
         amazon_data_deleted = db.query(AmazonProductData).filter(AmazonProductData.product_id.in_(product_ids)).delete(synchronize_session=False)
     products_deleted = db.query(Product).filter(scoped_profile_filter(Product, profile_id, db)).delete(synchronize_session=False)
     db.commit()
+    publish_realtime_event_sync(
+        "products.deleted",
+        {
+            "products_deleted": products_deleted,
+            "amazon_data_deleted": amazon_data_deleted,
+            "analyses_deleted": analyses_deleted,
+        },
+        profile_id,
+    )
 
     return ProductDatabaseClearResponse(
         success=True,
@@ -727,4 +897,5 @@ def delete_product(
 
     db.delete(product)
     db.commit()
+    publish_realtime_event_sync("product.deleted", {"product_id": product_id}, profile_id)
     return {"success": True}

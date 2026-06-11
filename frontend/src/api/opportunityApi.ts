@@ -5,8 +5,12 @@ import type {
   ProductAnalysisDetail,
   ProductDatabaseClearResponse,
   ProductJobResponse,
+  ProductSelectionClearResponse,
+  ProductSelectionResponse,
   RankingFilters,
   RankingItem,
+  SalePerformance,
+  SelectedProductItem,
 } from '../types/opportunity'
 
 const RANKING_IMPORT_SUPPLIER = 'Ranking Import'
@@ -96,6 +100,42 @@ export function deleteProduct(productId: number): Promise<{ success: boolean }> 
 
 export function deleteAllProducts(): Promise<ProductDatabaseClearResponse> {
   return apiRequest<ProductDatabaseClearResponse>('/products/database', {
+    method: 'DELETE',
+  })
+}
+
+export function fetchSelectedProducts(): Promise<SelectedProductItem[]> {
+  return apiRequest<SelectedProductItem[]>('/products/selected')
+}
+
+export function updateProductSelection(
+  productId: number,
+  input: { selectedForSale: boolean; salePerformance?: SalePerformance | null },
+): Promise<ProductSelectionResponse> {
+  return apiRequest<ProductSelectionResponse>(`/products/${productId}/selection`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      selected_for_sale: input.selectedForSale,
+      sale_performance: input.salePerformance ?? null,
+    }),
+  })
+}
+
+export function updateSelectedProductPerformance(
+  productId: number,
+  salePerformance: SalePerformance | null,
+): Promise<ProductSelectionResponse> {
+  return apiRequest<ProductSelectionResponse>('/products/selected/performance', {
+    method: 'PATCH',
+    body: JSON.stringify({
+      product_id: productId,
+      sale_performance: salePerformance,
+    }),
+  })
+}
+
+export function clearSelectedProducts(): Promise<ProductSelectionClearResponse> {
+  return apiRequest<ProductSelectionClearResponse>('/products/selected', {
     method: 'DELETE',
   })
 }

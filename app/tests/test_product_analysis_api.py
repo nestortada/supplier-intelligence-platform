@@ -5,10 +5,12 @@ from decimal import Decimal
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base, get_db
+from app.core.product_schema import ensure_product_selection_schema
 from app.main import app
 from app.models.amazon_data import AmazonProductData
 from app.models.analysis import ProductAnalysis
@@ -219,6 +221,96 @@ def test_product_ranking_orders_products_and_applies_filters(client: tuple[TestC
     )
     assert filtered.status_code == 200
     assert [item["product"]["id"] for item in filtered.json()] == [high_id]
+
+
+def test_selected_products_update_performance_and_clear_without_deleting_data(
+    client: tuple[TestClient, sessionmaker],
+) -> None:
+    test_client, TestingSessionLocal = client
+    with TestingSessionLocal() as db:
+        product = add_supplier_product(db, "Acme", "Widget", "10.00", "25.00")
+        db.commit()
+        product_id = product.id
+
+    assert test_client.post("/products/analyze", json={"product_ids": [product_id]}).status_code == 200
+
+    select_response = test_client.patch(
+        f"/products/{product_id}/selection",
+        json={"selected_for_sale": True, "sale_performance": None},
+    )
+    assert select_response.status_code == 200
+    assert select_response.json()["product"]["selected_for_sale"] is True
+    assert select_response.json()["product"]["selected_at"] is not None
+
+    selected_response = test_client.get("/products/selected")
+    assert selected_response.status_code == 200
+    selected = selected_response.json()
+    assert [item["product"]["id"] for item in selected] == [product_id]
+    assert selected[0]["amazon_data"]["asin"] == f"ASIN-{product_id}"
+    assert selected[0]["analysis"]["recommendation_status"] == "buy"
+    assert selected[0]["sale_performance"] is None
+
+    performance_response = test_client.patch(
+        "/products/selected/performance",
+        json={"product_id": product_id, "sale_performance": "medium"},
+    )
+    assert performance_response.status_code == 200
+    assert performance_response.json()["product"]["sale_performance"] == "medium"
+
+    invalid_response = test_client.patch(
+        "/products/selected/performance",
+        json={"product_id": product_id, "sale_performance": "excellent"},
+    )
+    assert invalid_response.status_code == 422
+
+    clear_response = test_client.delete("/products/selected")
+    assert clear_response.status_code == 200
+    assert clear_response.json() == {"success": True, "updated": 1}
+    assert test_client.get("/products/selected").json() == []
+
+    with TestingSessionLocal() as db:
+        product = db.get(Product, product_id)
+        assert product is not None
+        assert product.selected_for_sale is False
+        assert product.sale_performance is None
+        assert db.query(AmazonProductData).count() == 1
+        assert db.query(ProductAnalysis).count() == 1
+
+
+def test_product_selection_can_be_removed_with_product_endpoint(client: tuple[TestClient, sessionmaker]) -> None:
+    test_client, TestingSessionLocal = client
+    with TestingSessionLocal() as db:
+        product = add_supplier_product(db, "Acme", "Widget", "10.00", "25.00")
+        db.commit()
+        product_id = product.id
+
+    assert test_client.patch(f"/products/{product_id}/selection", json={"selected_for_sale": True}).status_code == 200
+
+    remove_response = test_client.patch(
+        f"/products/{product_id}/selection",
+        json={"selected_for_sale": False, "sale_performance": "high"},
+    )
+    assert remove_response.status_code == 200
+    removed = remove_response.json()["product"]
+    assert removed["selected_for_sale"] is False
+    assert removed["sale_performance"] is None
+    assert removed["selected_at"] is None
+
+
+def test_product_selection_schema_adds_columns_to_existing_sqlite_table() -> None:
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE products (id INTEGER NOT NULL PRIMARY KEY, product_name VARCHAR(255))"))
+        connection.execute(text("INSERT INTO products (id, product_name) VALUES (1, 'Legacy')"))
+
+    ensure_product_selection_schema(engine)
+
+    with engine.begin() as connection:
+        columns = {row[1] for row in connection.execute(text("PRAGMA table_info(products)")).fetchall()}
+        selected_for_sale = connection.execute(text("SELECT selected_for_sale FROM products WHERE id = 1")).scalar()
+
+    assert {"selected_for_sale", "sale_performance", "selected_at"}.issubset(columns)
+    assert selected_for_sale == 0
 
 
 def test_product_analysis_detail_returns_financial_scores_recommendation_and_histories(

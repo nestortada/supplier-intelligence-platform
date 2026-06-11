@@ -1,6 +1,8 @@
 # ── Environment & secrets ─────────────────────────────────────────────────
 .env
 *.env.local
+api-8a32a-firebase-adminsdk-fbsvc-1faa9d7722.json
+*-firebase-adminsdk-*.json
 
 # ── Database ─────────────────────────────────────────────────────────────
 *.db
