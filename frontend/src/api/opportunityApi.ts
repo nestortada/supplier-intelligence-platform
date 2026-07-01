@@ -139,3 +139,12 @@ export function clearSelectedProducts(): Promise<ProductSelectionClearResponse> 
     method: 'DELETE',
   })
 }
+
+export function fetchProducts(filters: { status?: string; pageSize?: number } = {}): Promise<{ items: any[]; total: number }> {
+  return apiRequest<{ items: any[]; total: number }>(
+    `/products${buildQuery({
+      status: filters.status,
+      page_size: filters.pageSize,
+    })}`,
+  )
+}

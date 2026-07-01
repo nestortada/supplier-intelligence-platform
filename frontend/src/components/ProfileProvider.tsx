@@ -31,15 +31,26 @@ export default function ProfileProvider({ children }: ProfileProviderProps) {
       const nextProfiles = await fetchProfiles()
       setProfiles(nextProfiles)
 
-      const activeId = storedProfileId()
-      const restoredProfile = nextProfiles.find((profile) => profile.id === activeId) ?? null
+      const activeSyncId = window.localStorage.getItem('supplierintel.activeProfileSyncId')
+      let restoredProfile = nextProfiles.find((profile) => profile.sync_id === activeSyncId) ?? null
+
+      if (!restoredProfile && activeSyncId === null) {
+        const activeId = storedProfileId()
+        restoredProfile = nextProfiles.find((profile) => profile.id === activeId) ?? null
+      }
+
       setActiveProfile(restoredProfile)
       if (restoredProfile) {
         window.localStorage.setItem(ACTIVE_PROFILE_NAME_STORAGE_KEY, restoredProfile.name)
+        window.localStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, String(restoredProfile.id))
+        if (restoredProfile.sync_id) {
+          window.localStorage.setItem('supplierintel.activeProfileSyncId', restoredProfile.sync_id)
+        }
       }
       if (!restoredProfile) {
         window.localStorage.removeItem(ACTIVE_PROFILE_STORAGE_KEY)
         window.localStorage.removeItem(ACTIVE_PROFILE_NAME_STORAGE_KEY)
+        window.localStorage.removeItem('supplierintel.activeProfileSyncId')
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'No se pudieron cargar los perfiles.')
@@ -61,6 +72,11 @@ export default function ProfileProvider({ children }: ProfileProviderProps) {
   const selectProfile = useCallback((profile: UserProfile) => {
     window.localStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, String(profile.id))
     window.localStorage.setItem(ACTIVE_PROFILE_NAME_STORAGE_KEY, profile.name)
+    if (profile.sync_id) {
+      window.localStorage.setItem('supplierintel.activeProfileSyncId', profile.sync_id)
+    } else {
+      window.localStorage.removeItem('supplierintel.activeProfileSyncId')
+    }
     setActiveProfile(profile)
   }, [])
 

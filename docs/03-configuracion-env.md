@@ -1,5 +1,6 @@
 # Configuracion y variables de entorno
 
+
 La configuracion local se toma de `.env`. Crea ese archivo desde `.env.example`.
 
 ```powershell
@@ -37,11 +38,12 @@ El backend envia JSON a EmailJS. Si EmailJS responde `403` y hay `EMAILJS_PRIVAT
 | Variable | Uso |
 | --- | --- |
 | `APIFY_TOKEN` | Token de Apify. |
-| `APIFY_ACTOR_ID` | Actor usado para buscar/enriquecer productos. |
+| `APIFY_ACTOR_ID` | Actor de detalles/busqueda Amazon usado para enriquecer productos. |
+| `APIFY_TRACKING_ACTOR_ID` | Actor de tracking/precios Amazon usado para historial, buybox, ofertas y variantes. |
 | `APIFY_USER_ID` | Identificador de usuario, si se requiere. |
 | `APIFY_API_BASE_URL` | Base URL de Apify. |
 
-El actor debe aceptar el payload construido por `app/services/apify_service.py`.
+Los actores deben aceptar los payloads construidos por `app/services/apify_service.py`.
 
 ## Datos del remitente
 

@@ -15,6 +15,7 @@ class UserProfileUpdate(BaseModel):
 
 class UserProfileRead(BaseModel):
     id: int
+    sync_id: str | None = None
     name: str
     avatar_data_url: str | None = None
     is_online: bool = False

@@ -1,4 +1,5 @@
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -46,9 +47,24 @@ def desktop_env_file() -> Path:
 
 
 def bundled_env_file() -> Path | None:
+    return bundled_data_file(".env")
+
+
+def bundled_data_file(filename: str) -> Path | None:
     bundle_root = getattr(sys, "_MEIPASS", None)
     if not bundle_root:
         return None
 
-    path = Path(bundle_root) / ".env"
+    path = Path(bundle_root) / filename
     return path if path.exists() else None
+
+
+def install_bundled_data_file(filename: str) -> Path | None:
+    bundled_file = bundled_data_file(filename)
+    if bundled_file is None:
+        return None
+
+    target = desktop_data_file(filename)
+    if not target.exists() or bundled_file.stat().st_size != target.stat().st_size:
+        shutil.copy2(bundled_file, target)
+    return target

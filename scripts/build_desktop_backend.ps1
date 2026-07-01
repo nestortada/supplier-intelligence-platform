@@ -30,6 +30,26 @@ try {
 
     if (Test-Path ".env") {
         $pyInstallerArgs += @("--add-data", ".env;.")
+
+        $firebaseCredentialsLine = Get-Content ".env" | Where-Object { $_ -match "^\s*FIREBASE_CREDENTIALS_PATH\s*=" } | Select-Object -First 1
+        if ($firebaseCredentialsLine) {
+            $firebaseCredentialsPath = ($firebaseCredentialsLine -replace "^\s*FIREBASE_CREDENTIALS_PATH\s*=", "").Trim().Trim('"').Trim("'")
+            if ($firebaseCredentialsPath) {
+                $resolvedFirebaseCredentialsPath = if ([System.IO.Path]::IsPathRooted($firebaseCredentialsPath)) {
+                    $firebaseCredentialsPath
+                }
+                else {
+                    Join-Path $root $firebaseCredentialsPath
+                }
+
+                if (Test-Path $resolvedFirebaseCredentialsPath) {
+                    $pyInstallerArgs += @("--add-data", "$resolvedFirebaseCredentialsPath;.")
+                }
+                else {
+                    Write-Warning "Firebase credentials file was not found: $resolvedFirebaseCredentialsPath"
+                }
+            }
+        }
     }
 
     $pyInstallerArgs += @("--name", $backendName, "app\desktop_server.py")

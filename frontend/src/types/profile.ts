@@ -1,5 +1,6 @@
 export type UserProfile = {
   id: number
+  sync_id?: string
   name: string
   avatar_data_url: string | null
   is_online: boolean

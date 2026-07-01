@@ -68,12 +68,12 @@ app.include_router(webhooks.router)
 
 async def periodic_sync_loop() -> None:
     while settings.FIREBASE_ENABLED:
-        await asyncio.sleep(max(settings.FIREBASE_SYNC_INTERVAL_SECONDS, 5))
         db = SessionLocal()
         try:
             SyncService(db).run_once()
         finally:
             db.close()
+        await asyncio.sleep(max(settings.FIREBASE_SYNC_INTERVAL_SECONDS, 5))
 
 
 @app.on_event("startup")

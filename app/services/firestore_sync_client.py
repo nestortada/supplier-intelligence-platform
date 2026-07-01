@@ -1,7 +1,34 @@
+from pathlib import Path
 from typing import Any
 
+from app.core.desktop_paths import app_data_dir, bundled_data_file, install_bundled_data_file, is_desktop_mode
 from app.core.config import settings
 from app.services.sync_registry import ENTITY_CONFIGS
+
+
+def _firebase_credentials_path() -> str:
+    configured_path = Path(settings.FIREBASE_CREDENTIALS_PATH).expanduser()
+    if configured_path.exists():
+        return str(configured_path)
+
+    candidates: list[Path] = []
+    if is_desktop_mode():
+        installed_file = install_bundled_data_file(configured_path.name)
+        if installed_file is not None:
+            candidates.append(installed_file)
+        bundled_file = bundled_data_file(configured_path.name)
+        if bundled_file is not None:
+            candidates.append(bundled_file)
+        candidates.append(app_data_dir() / configured_path.name)
+
+    candidates.append(Path.cwd() / configured_path)
+
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+
+    searched = ", ".join(str(candidate) for candidate in candidates)
+    raise RuntimeError(f"Firebase credentials file was not found. Configured: {configured_path}. Searched: {searched}")
 
 
 class FirestoreSyncClient:
@@ -21,7 +48,7 @@ class FirestoreSyncClient:
         try:
             app = firebase_admin.get_app(app_name)
         except ValueError:
-            credential = credentials.Certificate(settings.FIREBASE_CREDENTIALS_PATH)
+            credential = credentials.Certificate(_firebase_credentials_path())
             options = {"projectId": settings.FIREBASE_PROJECT_ID} if settings.FIREBASE_PROJECT_ID else None
             app = firebase_admin.initialize_app(credential, options=options, name=app_name)
 

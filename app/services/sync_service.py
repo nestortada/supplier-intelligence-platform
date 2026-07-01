@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.models.sync import SyncOutbox, SyncState
 from app.models.user_profile import UserProfile
 from app.services.firestore_sync_client import FirestoreSyncClient
+from app.core.realtime import publish_realtime_event_sync
 from app.services.sync_registry import (
     INBOUND_ORDER,
     apply_remote_payload,
@@ -213,6 +214,11 @@ class SyncService:
             profile_sync_ids.update(payload.get("sync_id") for payload in remote_profiles if payload.get("sync_id"))
 
             for profile_sync_id in profile_sync_ids:
+                profile = self.db.query(UserProfile).filter(UserProfile.sync_id == profile_sync_id).first()
+                profile_id = profile.id if profile else None
+                profile_applied = False
+                job_applied = False
+
                 for entity_type in INBOUND_ORDER:
                     if entity_type == "user_profile":
                         continue
@@ -223,11 +229,19 @@ class SyncService:
                         result = self._apply_remote(entity_type, payload)
                         if result in {"applied", "deleted"}:
                             applied += 1
+                            profile_applied = True
+                            if entity_type == "background_job":
+                                job_applied = True
                         elif result == "local_newer":
                             local_newer += 1
                         else:
                             skipped += 1
                 self.db.commit()
+
+                if profile_applied and profile_id is not None:
+                    publish_realtime_event_sync("products.updated", {"reason": "sync_inbound_applied"}, profile_id)
+                    if job_applied:
+                        publish_realtime_event_sync("job.updated", {"reason": "sync_inbound_applied"}, profile_id)
 
             _state_set(self.db, "last_inbound_sync", _now_iso())
             return {"applied": applied, "local_newer": local_newer, "skipped": skipped}

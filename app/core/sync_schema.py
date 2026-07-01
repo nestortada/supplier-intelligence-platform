@@ -38,6 +38,8 @@ def ensure_sync_schema(engine: Engine) -> None:
                 connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN sync_updated_at DATETIME"))
             if "sync_deleted_at" not in columns:
                 connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN sync_deleted_at DATETIME"))
+            if table_name == "background_jobs" and "error_items_json" not in columns:
+                connection.execute(text("ALTER TABLE background_jobs ADD COLUMN error_items_json TEXT"))
 
             rows = connection.execute(text(f"SELECT id FROM {table_name} WHERE sync_id IS NULL OR sync_id = ''")).fetchall()
             for row in rows:

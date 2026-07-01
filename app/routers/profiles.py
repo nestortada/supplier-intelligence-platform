@@ -23,6 +23,7 @@ router = APIRouter(prefix="/profiles", tags=["profiles"])
 def profile_response(profile: UserProfile) -> dict:
     return {
         "id": profile.id,
+        "sync_id": profile.sync_id,
         "name": profile.name,
         "avatar_data_url": profile.avatar_data_url,
         "is_online": manager.is_profile_online(profile.id),

@@ -63,8 +63,39 @@ def _search_keyword(product: Product) -> str | None:
 
 
 def build_apify_input(product: Product) -> dict[str, Any]:
-    keyword = _search_keyword(product)
+    sku_id = _sku_search_identifier(product)
+    asin = _latest_asin(product)
 
+    asins = []
+    start_urls = []
+
+    if sku_id and ("amazon." in sku_id.lower() or "/dp/" in sku_id.lower() or sku_id.lower().startswith(("http://", "https://"))):
+        start_urls.append({"url": sku_id})
+        import re
+        asin_match = re.search(r"/dp/([A-Z0-9]{10})", sku_id, re.IGNORECASE)
+        if asin_match:
+            asins.append(asin_match.group(1).upper())
+    elif sku_id:
+        asins.append(sku_id.upper())
+        start_urls.append({"url": f"https://www.amazon.com/dp/{sku_id}"})
+
+    if asin and asin.upper() not in [a.upper() for a in asins]:
+        asins.append(asin.upper())
+        if not any(f"/dp/{asin}" in u["url"] for u in start_urls):
+            start_urls.append({"url": f"https://www.amazon.com/dp/{asin}"})
+
+    if asins or start_urls:
+        return {
+            "asins": asins,
+            "fullDetails": True,
+            "proxyConfiguration": {
+                "useApifyProxy": True,
+                "apifyProxyGroups": ["RESIDENTIAL"],
+            },
+            "startUrls": start_urls,
+        }
+
+    keyword = _search_keyword(product)
     return {
         "keywords": [keyword] if keyword else [],
         "maxResultsPerKeyword": 50,
@@ -75,6 +106,23 @@ def build_apify_input(product: Product) -> dict[str, Any]:
             "useApifyProxy": True,
             "apifyProxyGroups": ["RESIDENTIAL"],
         },
+    }
+
+
+def build_apify_tracking_input(product: Product, fallback_asin: str | None = None) -> dict[str, Any]:
+    identifiers: list[str] = []
+    sku_id = _sku_search_identifier(product)
+    asin = _latest_asin(product)
+
+    for value in (sku_id, asin, fallback_asin):
+        identifier = clean_text(value)
+        if identifier and identifier.upper() not in [item.upper() for item in identifiers]:
+            identifiers.append(identifier)
+
+    return {
+        "identifiers": identifiers,
+        "include_variants": False,
+        "stream_output": True,
     }
 
 
@@ -128,6 +176,39 @@ def _first_text(value: Any) -> str | None:
     return clean_text(value)
 
 
+def _merge_apify_items(detail_item: dict[str, Any] | None, tracking_item: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not detail_item and not tracking_item:
+        return None
+
+    merged: dict[str, Any] = {}
+    for item in (tracking_item, detail_item):
+        if item:
+            merged.update({key: value for key, value in item.items() if value is not None})
+
+    if tracking_item:
+        for key in (
+            "price_new_history",
+            "price_new_fba_history",
+            "price_amazon_history",
+            "price_buybox_history",
+            "price_prime_exclusive_history",
+            "n_offers_new_history",
+            "variant_asins",
+            "variant_upcs",
+            "variant_eans",
+            "data_captured_at",
+            "last_updated",
+            "tracked_since",
+            "listed_at",
+        ):
+            if tracking_item.get(key) is not None:
+                merged[key] = tracking_item[key]
+
+    merged["apify_detail_actor_item"] = detail_item
+    merged["apify_tracking_actor_item"] = tracking_item
+    return merged
+
+
 def map_apify_item_to_amazon_data(product_id: int, data: dict[str, Any]) -> AmazonProductData:
     price_history = (
         data.get("price_new_history")
@@ -175,12 +256,13 @@ class ApifyService:
         self.max_retries = max_retries
         self.wait_for_finish_seconds = wait_for_finish_seconds
 
-    def run_actor(self, input_data: dict) -> dict:
-        missing_settings = self._missing_settings()
+    def run_actor(self, input_data: dict, actor_id: str | None = None) -> dict:
+        actor_id = actor_id or settings.APIFY_ACTOR_ID
+        missing_settings = self._missing_settings(actor_id=actor_id)
         if missing_settings:
             raise ApifyServiceError(f"Missing Apify settings: {', '.join(missing_settings)}")
 
-        endpoint = f"{settings.APIFY_API_BASE_URL.rstrip('/')}/acts/{settings.APIFY_ACTOR_ID}/runs"
+        endpoint = f"{settings.APIFY_API_BASE_URL.rstrip('/')}/acts/{actor_id}/runs"
         params = {"token": settings.APIFY_TOKEN, "waitForFinish": self.wait_for_finish_seconds}
         response_data = self._request("POST", endpoint, params=params, json=input_data)
         return response_data.get("data", response_data)
@@ -202,13 +284,23 @@ class ApifyService:
 
     def search_amazon_product(self, product: Product) -> dict | None:
         input_data = build_apify_input(product)
-        if not input_data["keywords"]:
+        if not input_data.get("asins") and not input_data.get("startUrls") and not input_data.get("keywords"):
             return None
 
-        actor_run = self.run_actor(input_data)
+        detail_item = self._run_actor_first_item(settings.APIFY_ACTOR_ID, input_data, product.id)
+        fallback_asin = clean_text(detail_item.get("asin")) if detail_item else None
+        tracking_input = build_apify_tracking_input(product, fallback_asin=fallback_asin)
+        tracking_item = None
+        if tracking_input.get("identifiers"):
+            tracking_item = self._run_actor_first_item(settings.APIFY_TRACKING_ACTOR_ID, tracking_input, product.id)
+
+        return _merge_apify_items(detail_item, tracking_item)
+
+    def _run_actor_first_item(self, actor_id: str, input_data: dict[str, Any], product_id: int | None = None) -> dict[str, Any] | None:
+        actor_run = self.run_actor(input_data, actor_id=actor_id)
         dataset_id = actor_run.get("defaultDatasetId")
         if not dataset_id:
-            logger.warning("apify_run_missing_dataset", extra={"product_id": product.id})
+            logger.warning("apify_run_missing_dataset", extra={"actor_id": actor_id, "product_id": product_id})
             return None
 
         items = self.get_dataset_items(dataset_id)
@@ -251,11 +343,11 @@ class ApifyService:
         raise ApifyServiceError("Apify request failed.")
 
     @staticmethod
-    def _missing_settings(require_actor: bool = True) -> list[str]:
+    def _missing_settings(require_actor: bool = True, actor_id: str | None = None) -> list[str]:
         required_settings = {
             "APIFY_TOKEN": settings.APIFY_TOKEN,
             "APIFY_API_BASE_URL": settings.APIFY_API_BASE_URL,
         }
         if require_actor:
-            required_settings["APIFY_ACTOR_ID"] = settings.APIFY_ACTOR_ID
+            required_settings["APIFY_ACTOR_ID"] = actor_id or settings.APIFY_ACTOR_ID
         return [name for name, value in required_settings.items() if not value]

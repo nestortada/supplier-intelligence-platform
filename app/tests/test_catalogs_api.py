@@ -62,14 +62,13 @@ def test_upload_catalog_with_supplier_name_creates_supplier_and_products(client:
     )
 
     assert response.status_code == 200
-    assert response.json() == {
-        "success": True,
-        "products_detected": 1,
-        "products_created": 1,
-        "duplicates": 0,
-        "missing_upc": 0,
-        "errors": 0,
-    }
+    data = response.json()
+    assert data["success"] is True
+    assert data["products_detected"] == 1
+    assert data["products_created"] == 1
+    assert data["duplicates"] == 0
+    assert data["missing_upc"] == 0
+    assert data["errors"] == 0
 
     products_response = client.get("/products", params={"supplier_id": 1})
     assert products_response.status_code == 200

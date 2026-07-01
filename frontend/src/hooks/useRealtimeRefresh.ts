@@ -15,6 +15,13 @@ export function useRealtimeRefresh(eventTypes: string[], refresh: () => void) {
     }
 
     window.addEventListener(REALTIME_EVENT_NAME, handleRealtimeEvent)
-    return () => window.removeEventListener(REALTIME_EVENT_NAME, handleRealtimeEvent)
+    const interval = window.setInterval(() => {
+      refresh()
+    }, 5000)
+
+    return () => {
+      window.removeEventListener(REALTIME_EVENT_NAME, handleRealtimeEvent)
+      window.clearInterval(interval)
+    }
   }, [eventTypes, refresh])
 }

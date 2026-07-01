@@ -25,6 +25,7 @@ import {
   fetchJobs,
   fetchJobStatus,
   fetchOpportunityRanking,
+  fetchProducts,
   updateProductSelection,
   uploadCatalogFile,
 } from '../api/opportunityApi'
@@ -43,6 +44,7 @@ type DeleteDialogState = { type: 'all' } | { type: 'product'; item: RankingItem 
 type ProductWorkflowSnapshot = {
   phase: WorkflowPhase
   uploadSummary: CatalogUploadResponse | null
+  uploadJob: JobStatus | null
   apifyJob: JobStatus | null
   analysisJob: JobStatus | null
   workflowError: string | null
@@ -86,6 +88,7 @@ function readWorkflowSnapshot(key: string): ProductWorkflowSnapshot | null {
     return {
       phase: parsed.phase,
       uploadSummary: parsed.uploadSummary ?? null,
+      uploadJob: parsed.uploadJob ?? null,
       apifyJob: parsed.apifyJob ?? null,
       analysisJob: parsed.analysisJob ?? null,
       workflowError: parsed.workflowError ?? null,
@@ -173,8 +176,10 @@ export default function OpportunityRankingPage() {
   const [rankingError, setRankingError] = useState<string | null>(null)
   const [phase, setPhase] = useState<WorkflowPhase>(storedWorkflow?.phase ?? 'idle')
   const [uploadSummary, setUploadSummary] = useState<CatalogUploadResponse | null>(storedWorkflow?.uploadSummary ?? null)
+  const [uploadJob, setUploadJob] = useState<JobStatus | null>(storedWorkflow?.uploadJob ?? null)
   const [apifyJob, setApifyJob] = useState<JobStatus | null>(storedWorkflow?.apifyJob ?? null)
   const [analysisJob, setAnalysisJob] = useState<JobStatus | null>(storedWorkflow?.analysisJob ?? null)
+  const [failedProducts, setFailedProducts] = useState<any[]>([])
   const [workflowError, setWorkflowError] = useState<string | null>(storedWorkflow?.workflowError ?? null)
   const [selectedFileName, setSelectedFileName] = useState<string | null>(storedWorkflow?.selectedFileName ?? null)
   const [deletingProductId, setDeletingProductId] = useState<number | null>(null)
@@ -187,6 +192,7 @@ export default function OpportunityRankingPage() {
 
   const workflowActive =
     phase === 'uploading' ||
+    activeStatuses.has(uploadJob?.status ?? '') ||
     activeStatuses.has(apifyJob?.status ?? '') ||
     activeStatuses.has(analysisJob?.status ?? '')
 
@@ -194,12 +200,13 @@ export default function OpportunityRankingPage() {
     writeWorkflowSnapshot(workflowStorageKey, {
       phase,
       uploadSummary,
+      uploadJob,
       apifyJob,
       analysisJob,
       workflowError,
       selectedFileName,
     })
-  }, [analysisJob, apifyJob, phase, selectedFileName, uploadSummary, workflowError, workflowStorageKey])
+  }, [analysisJob, apifyJob, phase, selectedFileName, uploadJob, uploadSummary, workflowError, workflowStorageKey])
 
   const kpis = useMemo(() => {
     const buy = ranking.filter((item) => item.recommendation.status === 'buy').length
@@ -212,8 +219,10 @@ export default function OpportunityRankingPage() {
     return { buy, review, averageScore }
   }, [ranking])
 
-  const loadRanking = useCallback(async () => {
-    setLoadingRanking(true)
+  const loadRanking = useCallback(async (silent = false) => {
+    if (!silent) {
+      setLoadingRanking(true)
+    }
     setRankingError(null)
     try {
       const response = await fetchOpportunityRanking(filters)
@@ -221,21 +230,87 @@ export default function OpportunityRankingPage() {
     } catch (caught) {
       setRankingError(caught instanceof Error ? caught.message : 'No se pudo cargar el ranking.')
     } finally {
-      setLoadingRanking(false)
+      if (!silent) {
+        setLoadingRanking(false)
+      }
     }
   }, [filters])
+
+  const loadFailedProducts = useCallback(async () => {
+    try {
+      const response = await fetchProducts({ status: 'insufficient_data', pageSize: 100 })
+      setFailedProducts(response.items)
+    } catch {
+      // Non-blocking
+    }
+  }, [])
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       void loadRanking()
+      void loadFailedProducts()
     }, 0)
 
     return () => window.clearTimeout(timeout)
-  }, [loadRanking])
+  }, [loadRanking, loadFailedProducts])
+
+  const refreshWorkflowJobs = useCallback(async () => {
+    const [uploadJobs, apifyJobs, analysisJobs] = await Promise.all([
+      fetchJobs({ type: 'catalog_upload' }),
+      fetchJobs({ type: 'apify_enrichment' }),
+      fetchJobs({ type: 'product_analysis' }),
+    ])
+
+    const latestUploadJob = uploadJobs[0] ?? null
+    const latestApifyJob = apifyJobs[0] ?? null
+    const latestAnalysisJob = analysisJobs[0] ?? null
+
+    setUploadJob(latestUploadJob)
+    setApifyJob(latestApifyJob)
+    setAnalysisJob(latestAnalysisJob)
+
+    if (latestAnalysisJob && activeStatuses.has(latestAnalysisJob.status)) {
+      setPhase('analysis')
+      return
+    }
+    if (latestApifyJob && activeStatuses.has(latestApifyJob.status)) {
+      setPhase('apify')
+      return
+    }
+    if (latestUploadJob && activeStatuses.has(latestUploadJob.status)) {
+      setPhase('uploading')
+      return
+    }
+  }, [])
 
   useRealtimeRefresh(rankingRealtimeEvents, () => {
-    void loadRanking()
+    void loadRanking(true)
+    void refreshWorkflowJobs()
+    void loadFailedProducts()
   })
+
+  useEffect(() => {
+    let cancelled = false
+
+    const pollFirebaseBackedChanges = async () => {
+      try {
+        await Promise.all([loadRanking(true), refreshWorkflowJobs(), loadFailedProducts()])
+      } catch {
+        // Page-level loaders and job monitors surface actionable errors.
+      }
+    }
+
+    const interval = window.setInterval(() => {
+      if (!cancelled) {
+        void pollFirebaseBackedChanges()
+      }
+    }, 5000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+    }
+  }, [loadRanking, refreshWorkflowJobs, loadFailedProducts])
 
   const waitForJob = useCallback(async (jobId: number, onUpdate: (job: JobStatus) => void) => {
     let current = await fetchJobStatus(jobId)
@@ -389,6 +464,7 @@ export default function OpportunityRankingPage() {
     async (file: File) => {
       setWorkflowError(null)
       setUploadSummary(null)
+      setUploadJob(null)
       setApifyJob(null)
       setAnalysisJob(null)
       setSelectedFileName(file.name)
@@ -397,6 +473,10 @@ export default function OpportunityRankingPage() {
         setPhase('uploading')
         const uploaded = await uploadCatalogFile(file)
         setUploadSummary(uploaded)
+        if (uploaded.job_id) {
+          const uploadedJob = await fetchJobStatus(uploaded.job_id)
+          setUploadJob(uploadedJob)
+        }
 
         setPhase('apify')
         const apify = await enrichPendingProducts()
@@ -409,6 +489,7 @@ export default function OpportunityRankingPage() {
           processed_items: 0,
           failed_items: 0,
           error_message: null,
+          error_items: [],
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         })
@@ -651,8 +732,10 @@ export default function OpportunityRankingPage() {
             onCancel={handleCancelWorkflow}
             phase={phase}
             selectedFileName={selectedFileName}
+            uploadJob={uploadJob}
             uploadSummary={uploadSummary}
             workflowError={workflowError}
+            failedProducts={failedProducts}
           />
         </div>
         <div className="xl:col-span-5">
@@ -778,8 +861,10 @@ function WorkflowPanel({
   onCancel: _onCancel,
   phase,
   selectedFileName,
+  uploadJob,
   uploadSummary,
   workflowError,
+  failedProducts,
 }: {
   analysisJob: JobStatus | null
   apifyJob: JobStatus | null
@@ -787,11 +872,14 @@ function WorkflowPanel({
   onCancel: () => void
   phase: WorkflowPhase
   selectedFileName: string | null
+  uploadJob: JobStatus | null
   uploadSummary: CatalogUploadResponse | null
   workflowError: string | null
+  failedProducts: any[]
 }) {
   void _canceling
   void _onCancel
+  const errorItems = [uploadJob, apifyJob, analysisJob].flatMap((job) => job?.error_items ?? [])
 
   return (
     <section className="glass-panel rounded-xl p-5 lg:p-6">
@@ -810,7 +898,8 @@ function WorkflowPanel({
       <div className="space-y-4">
         <WorkflowStep
           active={phase === 'uploading'}
-          complete={Boolean(uploadSummary)}
+          complete={completedJob(uploadJob) || Boolean(uploadSummary)}
+          job={uploadJob}
           label="Importación de catálogo"
           meta={
             uploadSummary
@@ -842,6 +931,55 @@ function WorkflowPanel({
           </div>
         </div>
       ) : null}
+
+      {errorItems.length > 0 ? (
+        <div className="mt-5 rounded-xl border border-danger/20 bg-danger/10 p-4">
+          <div className="mb-3 flex items-center gap-2 text-danger">
+            <AlertTriangle className="h-4 w-4" />
+            <h3 className="text-sm font-semibold">Productos con error</h3>
+          </div>
+          <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
+            {errorItems.map((item, index) => (
+              <div className="rounded-lg border border-danger/15 bg-background/60 p-3 text-xs" key={`${item.stage}-${item.product_id ?? index}-${index}`}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-semibold text-text">{item.product_name || `Producto ${item.product_id ?? index + 1}`}</p>
+                  <span className="rounded-full border border-danger/20 px-2 py-0.5 font-semibold uppercase text-danger">{item.stage}</span>
+                </div>
+                <p className="mt-1 text-muted">
+                  {item.sku ? `SKU: ${item.sku}` : null}
+                  {item.sku && item.upc ? ' · ' : null}
+                  {item.upc ? `UPC: ${item.upc}` : null}
+                </p>
+                <p className="mt-2 text-danger">{item.message}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {failedProducts.length > 0 ? (
+        <div className="mt-5 rounded-xl border border-warning/20 bg-warning/5 p-4">
+          <div className="mb-3 flex items-center gap-2 text-warning">
+            <AlertTriangle className="h-4 w-4" />
+            <h3 className="text-sm font-semibold text-text">Productos sin datos suficientes (Apify)</h3>
+          </div>
+          <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
+            {failedProducts.map((item) => (
+              <div className="rounded-lg border border-outline/30 bg-background/60 p-3 text-xs flex flex-wrap items-center justify-between gap-2" key={item.id}>
+                <div>
+                  <p className="font-semibold text-text">{item.product_name || `Producto ${item.id}`}</p>
+                  <p className="mt-1 text-muted">
+                    {item.sku ? `SKU: ${item.sku}` : null}
+                    {item.sku && item.upc ? ' · ' : null}
+                    {item.upc ? `UPC: ${item.upc}` : null}
+                  </p>
+                </div>
+                <span className="rounded-full border border-warning/20 px-2 py-0.5 font-semibold uppercase text-warning">Sin datos</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </section>
   )
 }
@@ -860,13 +998,16 @@ function WorkflowStep({
   meta: string
 }) {
   const progress = job?.progress ?? (complete ? 100 : 0)
+  const remaining = job ? Math.max(job.total_items - job.processed_items, 0) : 0
 
   return (
     <div className="rounded-xl border border-outline/40 bg-background/50 p-4">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <p className="text-sm font-semibold text-text">{label}</p>
-          <p className="mt-1 text-xs text-muted">{job ? `${job.processed_items}/${job.total_items} procesados` : meta}</p>
+          <p className="mt-1 text-xs text-muted">
+            {job ? `${job.processed_items}/${job.total_items} procesados · faltan ${remaining}` : meta}
+          </p>
         </div>
         <span
           className={cx(

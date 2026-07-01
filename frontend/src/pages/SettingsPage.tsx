@@ -1,10 +1,12 @@
-import { AlertTriangle, Camera, Check, Loader2, RotateCcw, Save, Trash2, User, X } from 'lucide-react'
+import { AlertTriangle, Camera, Check, Cloud, Loader2, RefreshCw, RotateCcw, Save, Trash2, User, X } from 'lucide-react'
 import { type ChangeEvent, type FormEvent, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { fetchSyncStatus, runSync } from '../api/syncApi'
 import ConfirmDialog from '../components/ConfirmDialog'
 import ProfileAvatar from '../components/ProfileAvatar'
 import { useProfile } from '../hooks/useProfile'
 import { useToast } from '../hooks/useToast'
+import type { SyncStatus } from '../types/opportunity'
 import { cx } from '../utils/classNames'
 
 const MAX_AVATAR_BYTES = 900_000
@@ -29,6 +31,8 @@ export default function SettingsPage() {
   const [deleting, setDeleting] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null)
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null)
+  const [syncLoading, setSyncLoading] = useState(false)
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -39,6 +43,29 @@ export default function SettingsPage() {
 
     return () => window.clearTimeout(timeout)
   }, [activeProfile])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadSyncStatus() {
+      try {
+        const status = await fetchSyncStatus()
+        if (!cancelled) {
+          setSyncStatus(status)
+        }
+      } catch {
+        if (!cancelled) {
+          setSyncStatus(null)
+        }
+      }
+    }
+
+    void loadSyncStatus()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const dirty = useMemo(() => {
     return name.trim() !== (activeProfile?.name ?? '') || avatarDataUrl !== (activeProfile?.avatar_data_url ?? null)
@@ -128,6 +155,35 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleRunSync() {
+    setSyncLoading(true)
+    try {
+      const status = await runSync()
+      setSyncStatus(status)
+      if (status.error || status.last_error) {
+        addToast({
+          title: 'Firebase no se sincronizo',
+          message: status.error || status.last_error || 'Revisa la configuracion.',
+          tone: 'error',
+        })
+      } else {
+        addToast({
+          title: 'Firebase sincronizado',
+          message: `${status.pending_count} pendientes, namespace ${status.namespace}.`,
+          tone: 'success',
+        })
+      }
+    } catch (caught) {
+      addToast({
+        title: 'No se pudo sincronizar Firebase',
+        message: caught instanceof Error ? caught.message : 'Intentalo nuevamente.',
+        tone: 'error',
+      })
+    } finally {
+      setSyncLoading(false)
+    }
+  }
+
   if (!activeProfile) {
     return null
   }
@@ -197,6 +253,40 @@ export default function SettingsPage() {
 
             {avatarError ? <p className="text-sm text-danger">{avatarError}</p> : null}
           </div>
+        </div>
+      </section>
+
+      <section className="glass-panel glow-border rounded-2xl p-5 sm:p-6">
+        <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-start gap-4">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary/10">
+              <Cloud className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <h2 className="font-display text-2xl font-semibold text-text">Firebase Sync</h2>
+              <div className="mt-2 flex flex-wrap gap-2 text-xs font-semibold uppercase text-muted">
+                <span className={cx('rounded-md px-2 py-1', syncStatus?.enabled ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning')}>
+                  {syncStatus?.enabled ? 'Activo' : 'Inactivo'}
+                </span>
+                <span className="rounded-md bg-white/5 px-2 py-1">Pendientes: {syncStatus?.pending_count ?? 0}</span>
+                <span className="rounded-md bg-white/5 px-2 py-1">Fallidos: {syncStatus?.failed_count ?? 0}</span>
+                <span className="rounded-md bg-white/5 px-2 py-1">Namespace: {syncStatus?.namespace ?? 'default'}</span>
+              </div>
+              {syncStatus?.last_successful_sync ? (
+                <p className="mt-3 text-sm text-muted">Ultima sincronizacion: {new Date(syncStatus.last_successful_sync).toLocaleString('es-CO')}</p>
+              ) : null}
+              {syncStatus?.last_error ? <p className="mt-3 max-w-4xl text-sm text-danger">{syncStatus.last_error}</p> : null}
+            </div>
+          </div>
+          <button
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-6 py-3 text-sm font-bold text-[#23005c] shadow-glow transition hover:bg-primary/90 disabled:opacity-60"
+            disabled={syncLoading || syncStatus?.enabled === false}
+            onClick={() => void handleRunSync()}
+            type="button"
+          >
+            {syncLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            Sincronizar ahora
+          </button>
         </div>
       </section>
 

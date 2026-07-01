@@ -1,5 +1,6 @@
-from typing import Annotated
+import json
 from datetime import datetime
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -14,6 +15,16 @@ from app.core.realtime import publish_realtime_event_sync
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
+def job_error_items(job: BackgroundJob) -> list[dict[str, object]]:
+    if not job.error_items_json:
+        return []
+    try:
+        parsed = json.loads(job.error_items_json)
+    except json.JSONDecodeError:
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
 def job_status_response(job: BackgroundJob) -> JobStatusResponse:
     return JobStatusResponse(
         job_id=job.id,
@@ -26,6 +37,7 @@ def job_status_response(job: BackgroundJob) -> JobStatusResponse:
         error_message=job.error_message,
         created_at=job.created_at,
         updated_at=job.updated_at,
+        error_items=job_error_items(job),
     )
 
 
@@ -39,6 +51,7 @@ def job_event_payload(job: BackgroundJob) -> dict[str, object]:
         "processed_items": job.processed_items,
         "failed_items": job.failed_items,
         "error_message": job.error_message,
+        "error_items": job_error_items(job),
         "updated_at": job.updated_at.isoformat() if job.updated_at else None,
     }
 

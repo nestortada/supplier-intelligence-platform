@@ -31,6 +31,7 @@ class Settings(BaseSettings):
 
     APIFY_TOKEN: str = ""
     APIFY_ACTOR_ID: str = ""
+    APIFY_TRACKING_ACTOR_ID: str = "gvFpWjQm90ZfTDdEf"
     APIFY_USER_ID: str = ""
     APIFY_API_BASE_URL: str = "https://api.apify.com/v2"
 
@@ -46,7 +47,7 @@ class Settings(BaseSettings):
     FIREBASE_CREDENTIALS_PATH: str = ""
     FIREBASE_PROJECT_ID: str = ""
     FIREBASE_NAMESPACE: str = "default"
-    FIREBASE_SYNC_INTERVAL_SECONDS: int = 60
+    FIREBASE_SYNC_INTERVAL_SECONDS: int = 5
 
     WEBHOOK_SECRET: str = ""
 

@@ -175,6 +175,7 @@ export default function AppShell({ children }: AppShellProps) {
           processed_items: Number(job.processed_items ?? 0),
           failed_items: Number(job.failed_items ?? 0),
           error_message: typeof job.error_message === 'string' ? job.error_message : null,
+          error_items: Array.isArray(job.error_items) ? job.error_items : [],
           created_at: new Date().toISOString(),
           updated_at: typeof job.updated_at === 'string' ? job.updated_at : new Date().toISOString(),
         })

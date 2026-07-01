@@ -1,4 +1,6 @@
-from typing import Annotated
+import json
+from datetime import datetime
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel
@@ -7,6 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.profiles import get_active_profile_id, scoped_profile_filter
+from app.core.realtime import publish_realtime_event_sync
+from app.models.background_job import BackgroundJob
 from app.models.product import Product
 from app.models.supplier import Supplier
 from app.services.excel_service import SupplierFileError, parse_products_file
@@ -17,11 +21,52 @@ router = APIRouter(prefix="/catalogs", tags=["catalogs"])
 
 class CatalogUploadResponse(BaseModel):
     success: bool
+    job_id: int | None = None
     products_detected: int
     products_created: int
     duplicates: int
     missing_upc: int
     errors: int
+
+
+def _job_error_items(job: BackgroundJob) -> list[dict[str, Any]]:
+    if not job.error_items_json:
+        return []
+    try:
+        parsed = json.loads(job.error_items_json)
+    except json.JSONDecodeError:
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def _job_event_payload(job: BackgroundJob) -> dict[str, Any]:
+    return {
+        "job_id": job.id,
+        "type": job.type,
+        "status": job.status,
+        "progress": job.progress,
+        "total_items": job.total_items,
+        "processed_items": job.processed_items,
+        "failed_items": job.failed_items,
+        "error_message": job.error_message,
+        "error_items": _job_error_items(job),
+        "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+    }
+
+
+def _record_job_error(job: BackgroundJob, row: dict | None, stage: str, message: str) -> None:
+    errors = _job_error_items(job)
+    errors.append(
+        {
+            "product_id": None,
+            "product_name": row.get("product_name") if row else None,
+            "sku": row.get("sku") if row else None,
+            "upc": row.get("upc") if row else None,
+            "stage": stage,
+            "message": message,
+        }
+    )
+    job.error_items_json = json.dumps(errors[-200:], ensure_ascii=True)
 
 
 @router.get("")
@@ -124,6 +169,21 @@ async def upload_catalog(
     except SupplierFileError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=exc.message) from exc
 
+    job = BackgroundJob(
+        profile_id=profile_id,
+        type="catalog_upload",
+        status="in_progress",
+        progress=0,
+        total_items=len(parsed_file.rows),
+        processed_items=0,
+        failed_items=parsed_file.errors,
+        error_message=None,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    publish_realtime_event_sync("job.created", _job_event_payload(job), profile_id)
+
     supplier = _resolve_supplier(db, supplier_id, supplier_name, profile_id)
     existing_upcs, existing_eans, existing_gtins, existing_skus = _existing_duplicate_keys(
         db, supplier.id, parsed_file.rows, profile_id
@@ -132,7 +192,7 @@ async def upload_catalog(
     db_duplicates = 0
     products_created = 0
 
-    for row in parsed_file.rows:
+    for index, row in enumerate(parsed_file.rows, start=1):
         if (
             (row.get("upc") and row["upc"] in existing_upcs)
             or (row.get("ean") and row["ean"] in existing_eans)
@@ -140,11 +200,22 @@ async def upload_catalog(
             or (row.get("sku") and row["sku"] in existing_skus)
         ):
             db_duplicates += 1
+            job.failed_items += 1
+            _record_job_error(job, row, "catalog_upload", "Producto duplicado; no se importo.")
+            job.processed_items = index
+            job.progress = int((job.processed_items / job.total_items) * 100) if job.total_items else 100
+            job.updated_at = datetime.utcnow()
+            if index == len(parsed_file.rows) or index % 25 == 0:
+                db.commit()
+                publish_realtime_event_sync("job.updated", _job_event_payload(job), profile_id)
             continue
 
         product = Product(**row, supplier_id=supplier.id, profile_id=profile_id)
         db.add(product)
         products_created += 1
+        job.processed_items = index
+        job.progress = int((job.processed_items / job.total_items) * 100) if job.total_items else 100
+        job.updated_at = datetime.utcnow()
 
         if product.upc:
             existing_upcs.add(product.upc)
@@ -155,10 +226,20 @@ async def upload_catalog(
         if product.sku:
             existing_skus.add(product.sku)
 
+        if index == len(parsed_file.rows) or index % 25 == 0:
+            db.commit()
+            publish_realtime_event_sync("job.updated", _job_event_payload(job), profile_id)
+
+    job.status = "completed" if products_created > 0 or job.failed_items < max(job.total_items, 1) else "failed"
+    job.progress = 100
+    job.updated_at = datetime.utcnow()
     db.commit()
+    publish_realtime_event_sync("job.updated", _job_event_payload(job), profile_id)
+    publish_realtime_event_sync("products.updated", {"reason": "catalog_upload_finished", "job_id": job.id}, profile_id)
 
     return CatalogUploadResponse(
         success=True,
+        job_id=job.id,
         products_detected=parsed_file.products_detected,
         products_created=products_created,
         duplicates=parsed_file.duplicates_removed + db_duplicates,

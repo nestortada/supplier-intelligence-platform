@@ -94,6 +94,31 @@ def _update_job_progress(db: Session, job: BackgroundJob) -> None:
     publish_realtime_event_sync("job.updated", _job_event_payload(job), job.profile_id)
 
 
+def _job_error_items(job: BackgroundJob) -> list[dict[str, Any]]:
+    if not job.error_items_json:
+        return []
+    try:
+        parsed = json.loads(job.error_items_json)
+    except json.JSONDecodeError:
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def _record_job_error(job: BackgroundJob, product: Product | None, stage: str, message: str) -> None:
+    errors = _job_error_items(job)
+    errors.append(
+        {
+            "product_id": product.id if product else None,
+            "product_name": product.product_name if product else None,
+            "sku": product.sku if product else None,
+            "upc": product.upc if product else None,
+            "stage": stage,
+            "message": message,
+        }
+    )
+    job.error_items_json = json.dumps(errors[-200:], ensure_ascii=True)
+
+
 def _job_event_payload(job: BackgroundJob) -> dict[str, Any]:
     return {
         "job_id": job.id,
@@ -104,6 +129,7 @@ def _job_event_payload(job: BackgroundJob) -> dict[str, Any]:
         "processed_items": job.processed_items,
         "failed_items": job.failed_items,
         "error_message": job.error_message,
+        "error_items": _job_error_items(job),
         "updated_at": job.updated_at.isoformat() if job.updated_at else None,
     }
 
@@ -286,6 +312,7 @@ def run_apify_enrichment(
             product = db.query(Product).filter(scoped_profile_filter(Product, profile_id, db), Product.id == product_id).first()
             if product is None:
                 job.failed_items += 1
+                _record_job_error(job, None, "apify", f"Producto {product_id} no existe o no pertenece al perfil.")
                 job.processed_items += 1
                 _update_job_progress(db, job)
                 continue
@@ -302,12 +329,15 @@ def run_apify_enrichment(
                     product.status = "enriched"
                 else:
                     product.status = "insufficient_data"
+                    job.failed_items += 1
+                    _record_job_error(job, product, "apify", "Apify no devolvio datos suficientes para este producto.")
 
                 product.updated_at = datetime.utcnow()
             except Exception as exc:
                 logger.exception("apify_product_enrichment_failed", extra={"job_id": job_id, "product_id": product.id})
                 job.failed_items += 1
                 job.error_message = str(exc)
+                _record_job_error(job, product, "apify", str(exc))
 
             job.processed_items += 1
             _update_job_progress(db, job)
@@ -386,6 +416,7 @@ def run_product_analysis(job_id: int, product_ids: list[int], profile_id: int) -
             product = db.query(Product).filter(scoped_profile_filter(Product, profile_id, db), Product.id == product_id).first()
             if product is None:
                 job.failed_items += 1
+                _record_job_error(job, None, "analysis", f"Producto {product_id} no existe o no pertenece al perfil.")
                 job.processed_items += 1
                 _update_job_progress(db, job)
                 continue
@@ -400,6 +431,7 @@ def run_product_analysis(job_id: int, product_ids: list[int], profile_id: int) -
                 logger.exception("product_analysis_failed", extra={"job_id": job_id, "product_id": product.id})
                 job.failed_items += 1
                 job.error_message = str(exc)
+                _record_job_error(job, product, "analysis", str(exc))
 
             job.processed_items += 1
             _update_job_progress(db, job)

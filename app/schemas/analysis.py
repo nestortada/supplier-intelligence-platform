@@ -1,7 +1,16 @@
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class JobErrorItem(BaseModel):
+    product_id: int | None = None
+    product_name: str | None = None
+    sku: str | None = None
+    upc: str | None = None
+    stage: str
+    message: str
 
 
 class ProductAnalysisBase(BaseModel):
@@ -40,6 +49,7 @@ class BackgroundJobBase(BaseModel):
     processed_items: int = 0
     failed_items: int = 0
     error_message: str | None = None
+    error_items: list[JobErrorItem] = Field(default_factory=list)
 
 
 class BackgroundJobCreate(BackgroundJobBase):
@@ -65,3 +75,4 @@ class JobStatusResponse(BaseModel):
     error_message: str | None = None
     created_at: datetime
     updated_at: datetime
+    error_items: list[JobErrorItem] = Field(default_factory=list)

@@ -1,5 +1,6 @@
 export type CatalogUploadResponse = {
   success: boolean
+  job_id: number | null
   products_detected: number
   products_created: number
   duplicates: number
@@ -12,6 +13,27 @@ export type ProductJobResponse = {
   job_id: number
   total_items: number
   status: string
+}
+
+export type SyncStatus = {
+  enabled: boolean
+  namespace: string
+  last_successful_sync: string | null
+  last_inbound_sync: string | null
+  last_error: string | null
+  pending_count: number
+  failed_count: number
+  outbound?: {
+    pushed: number
+    remote_newer: number
+    failed: number
+  }
+  inbound?: {
+    applied: number
+    local_newer: number
+    skipped: number
+  }
+  error?: string
 }
 
 export type ProductDatabaseClearResponse = {
@@ -42,8 +64,18 @@ export type JobStatus = {
   processed_items: number
   failed_items: number
   error_message: string | null
+  error_items: JobErrorItem[]
   created_at: string
   updated_at: string
+}
+
+export type JobErrorItem = {
+  product_id: number | null
+  product_name: string | null
+  sku: string | null
+  upc: string | null
+  stage: string
+  message: string
 }
 
 export type ProductPayload = {
